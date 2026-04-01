@@ -26,6 +26,7 @@ jobs:
       - run: npx nuxt generate
         env:
           NUXT_PUBLIC_EGOV_CLIENT_ID: ${{ secrets.EGOV_CLIENT_ID }}
+          NUXT_PUBLIC_EGOV_CLIENT_SECRET: ${{ secrets.EGOV_CLIENT_SECRET }}
           NUXT_PUBLIC_EGOV_REDIRECT_URI: ${{ secrets.EGOV_REDIRECT_URI }}
           NUXT_PUBLIC_EGOV_AUTH_BASE: ${{ secrets.EGOV_AUTH_BASE }}
           NUXT_PUBLIC_EGOV_API_BASE: ${{ secrets.EGOV_API_BASE }}

@@ -53,19 +53,21 @@ export function useEgovAuth() {
     }
 
     const clientId = config.public.egovClientId as string
+    const clientSecret = config.public.egovClientSecret as string
     const redirectUri = config.public.egovRedirectUri as string
+    const basicAuth = btoa(`${clientId}:${clientSecret}`)
 
     const res = await fetch(`${authBase}/token`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
+        'Authorization': `Basic ${basicAuth}`,
       },
       body: new URLSearchParams({
         grant_type: 'authorization_code',
         code,
         redirect_uri: redirectUri,
         code_verifier: codeVerifier,
-        client_id: clientId,
       }),
     })
 
@@ -85,16 +87,18 @@ export function useEgovAuth() {
     if (!refreshToken.value) throw new Error('No refresh token')
 
     const clientId = config.public.egovClientId as string
+    const clientSecret = config.public.egovClientSecret as string
+    const basicAuth = btoa(`${clientId}:${clientSecret}`)
 
     const res = await fetch(`${authBase}/token`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
+        'Authorization': `Basic ${basicAuth}`,
       },
       body: new URLSearchParams({
         grant_type: 'refresh_token',
         refresh_token: refreshToken.value,
-        client_id: clientId,
       }),
     })
 

@@ -12,6 +12,7 @@ export default defineNuxtConfig({
   runtimeConfig: {
     public: {
       egovClientId: '',
+      egovClientSecret: '',
       egovRedirectUri: '',
       egovAuthBase: 'https://account2.sbx.e-gov.go.jp/auth',
       egovApiBase: 'https://api2.sbx.e-gov.go.jp/shinsei/v2',
