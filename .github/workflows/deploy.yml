@@ -22,8 +22,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
+      - run: npm install
       - run: npx nuxt generate
         env:
           NUXT_PUBLIC_EGOV_CLIENT_ID: ${{ secrets.EGOV_CLIENT_ID }}
