@@ -15,7 +15,9 @@ onMounted(async () => {
 
   try {
     await handleCallback(code, state)
-    router.replace('/')
+    const returnTo = sessionStorage.getItem('egov_return_to') || '/'
+    sessionStorage.removeItem('egov_return_to')
+    router.replace(returnTo)
   }
   catch (e) {
     error.value = e instanceof Error ? e.message : '認証に失敗しました'
