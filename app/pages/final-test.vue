@@ -170,7 +170,6 @@ async function submitOne(proc: TestProcedure) {
     const zip = await JSZip.loadAsync(zipData)
 
     // 構成管理XML（kousei.xml）の必須フィールドのみに値を入れる
-    // 提出先識別子/提出先名称はkouseiTestValuesに含めない（手続によって不要なため空タグのまま残す）
     const kouseiTestValues: Record<string, string> = {
       受付行政機関ID: '100' + proc.proc_id.substring(0, 3),
       手続ID: proc.proc_id,
@@ -184,6 +183,8 @@ async function submitOne(proc: TestProcedure) {
       電話番号: testData.電話番号,
       電子メールアドレス: testData.電子メールアドレス,
       法人名: testData.法人名,
+      提出先識別子: testData.提出先識別子,
+      提出先名称: testData.提出先名称,
     }
 
     const configFiles = skeleton.results.configuration_file_name

@@ -25,3 +25,9 @@ logs
 
 # e-Gov spec files (downloaded via egov-spec skill)
 spec/
+
+# Claude Code
+.claude/
+
+# Downloaded schema files
+kousei_schema/
