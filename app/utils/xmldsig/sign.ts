@@ -125,21 +125,21 @@ function rsaSha256Sign(data: string, privateKey: forge.pki.rsa.PrivateKey): stri
 
 function buildReferenceXml(uri: string, digestValue: string, hasTransform: boolean): string {
   const transformBlock = hasTransform
-    ? `<ds:Transforms><ds:Transform Algorithm="${C14N_ALGO}"/></ds:Transforms>`
+    ? `<Transforms><Transform Algorithm="${C14N_ALGO}"/></Transforms>`
     : ''
-  return `<ds:Reference URI="${escapeXmlAttr(uri)}">`
+  return `<Reference URI="${escapeXmlAttr(uri)}">`
     + transformBlock
-    + `<ds:DigestMethod Algorithm="${DIGEST_ALGO}"/>`
-    + `<ds:DigestValue>${digestValue}</ds:DigestValue>`
-    + `</ds:Reference>`
+    + `<DigestMethod Algorithm="${DIGEST_ALGO}"/>`
+    + `<DigestValue>${digestValue}</DigestValue>`
+    + `</Reference>`
 }
 
 function buildSignedInfoXml(referenceXmls: string[]): string {
-  return `<ds:SignedInfo xmlns:ds="${DSIG_NS}">`
-    + `<ds:CanonicalizationMethod Algorithm="${C14N_ALGO}"/>`
-    + `<ds:SignatureMethod Algorithm="${SIG_ALGO}"/>`
+  return `<SignedInfo xmlns="${DSIG_NS}">`
+    + `<CanonicalizationMethod Algorithm="${C14N_ALGO}"/>`
+    + `<SignatureMethod Algorithm="${SIG_ALGO}"/>`
     + referenceXmls.join('')
-    + `</ds:SignedInfo>`
+    + `</SignedInfo>`
 }
 
 function buildFullSignatureXml(
@@ -148,19 +148,15 @@ function buildFullSignatureXml(
   signatureValue: string,
   certificateBase64: string,
 ): string {
-  // SignedInfo から xmlns:ds を除去（親の ds:Signature が宣言するため）
-  const signedInfoInner = signedInfoXml.replace(` xmlns:ds="${DSIG_NS}"`, '')
+  // SignedInfo から xmlns を除去（親の Signature が宣言するため）
+  const signedInfoInner = signedInfoXml.replace(` xmlns="${DSIG_NS}"`, '')
 
   return `<署名情報>`
-    + `<ds:Signature xmlns:ds="${DSIG_NS}" Id="${id}">`
+    + `<Signature xmlns="${DSIG_NS}" Id="${id}">`
     + signedInfoInner
-    + `<ds:SignatureValue>${signatureValue}</ds:SignatureValue>`
-    + `<ds:KeyInfo>`
-    + `<ds:X509Data>`
-    + `<ds:X509Certificate>${certificateBase64}</ds:X509Certificate>`
-    + `</ds:X509Data>`
-    + `</ds:KeyInfo>`
-    + `</ds:Signature>`
+    + `<SignatureValue>${signatureValue}</SignatureValue>`
+    + `<KeyInfo><X509Data><X509Certificate>${certificateBase64}</X509Certificate></X509Data></KeyInfo>`
+    + `</Signature>`
     + `</署名情報>`
 }
 
