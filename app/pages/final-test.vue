@@ -76,7 +76,11 @@ async function submitOne(proc: TestProcedure) {
           xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
           xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
         }
-        // 初回受付番号は新規申請なので空のまま残す
+        // 添付書類属性情報: 添付種別を「別送」にして提出情報を「0」(未提出)にする
+        // これにより添付ファイルなしで申請可能
+        xml = xml.replace(/<添付種別\/>/g, '<添付種別>別送</添付種別>')
+        xml = xml.replace(/<提出情報\/>/g, '<提出情報>0</提出情報>')
+        xml = xml.replace(/<添付書類名称\/>/g, '<添付書類名称>テスト添付書類</添付書類名称>')
         // 空タグはそのまま残す（不要な値を入れない）
         zip.file(kouseiPath, xml)
       }
