@@ -8,6 +8,8 @@ export interface TestProcedure {
   note: string
   /** 署名要否: true = 署名あり手続（署名を付与すべき） */
   signatureRequired?: boolean
+  /** 最大署名者数（連署が必要な手続で2以上を指定） */
+  signatureCount?: number
 }
 
 /** 提出先が必要な手続のproc_id一覧（Excelの提出先カラムが`-`でないもの） */
@@ -43,7 +45,7 @@ export const TEST_PROCEDURES: TestProcedure[] = [
   { no: 18, proc_id: '950A010700006000', name: 'ＡＰＩテスト用手続（社会保険関係手続）（通）１００４／ＡＰＩテスト用手続（社会保険関係手続）（通）１００４', format: 'standard', expected_state: '取下げ申請が可能な状態', expected_status: '審査中', note: '取下げが却下される', signatureRequired: true },
   { no: 19, proc_id: '950A010700007000', name: 'ＡＰＩテスト用手続（社会保険関係手続）（通）１００５／ＡＰＩテスト用手続（社会保険関係手続）（通）１００５', format: 'standard', expected_state: '取下げ申請が可能な状態', expected_status: '審査中', note: '取下げが承認される', signatureRequired: true },
   { no: 20, proc_id: '950A010700008000', name: 'ＡＰＩテスト用手続（社会保険関係手続）（通）１００６／ＡＰＩテスト用手続（社会保険関係手続）（通）１００６', format: 'standard', expected_state: '取下げ申請が可能な状態', expected_status: '審査中', note: '取下げが却下される', signatureRequired: true },
-  { no: 21, proc_id: '900A020700013000', name: 'ＡＰＩテスト用手続（労働保険適用徴収関係手続）（通）０００３／ＡＰＩテスト用手続（労働保険適用徴収関係手続）（通）０００３', format: 'standard', expected_state: '補正申請が可能な状態', expected_status: '審査中（補正待ち）', note: '部分補正が可能な手続', signatureRequired: true },
+  { no: 21, proc_id: '900A020700013000', name: 'ＡＰＩテスト用手続（労働保険適用徴収関係手続）（通）０００３／ＡＰＩテスト用手続（労働保険適用徴収関係手続）（通）０００３', format: 'standard', expected_state: '補正申請が可能な状態', expected_status: '審査中（補正待ち）', note: '部分補正が可能な手続', signatureRequired: true, signatureCount: 3 },
   { no: 22, proc_id: '900A013800001000', name: 'ＡＰＩテスト用手続（電子送達関係手続）（通）０００１／ＡＰＩテスト用手続（電子送達関係手続）（通）０００１', format: 'standard', expected_state: '電子送達の取得が可能な状態', expected_status: '到達', note: '電子送達1件（署名不要）', signatureRequired: false },
 
   // 個別署名形式 (27件)

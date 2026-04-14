@@ -30,21 +30,43 @@ export function useXmlSign() {
     pfxLoaded.value = true
   }
 
+  // 追加証明書（連署用）
+  const extraPfxList = useState<ParsedPfx[]>('xmlsign-extra-pfx', () => [])
+
+  function loadExtraPfx(file: File, password: string): Promise<void> {
+    return file.arrayBuffer().then((buf) => {
+      const result = parsePfx(buf, password)
+      extraPfxList.value = [...extraPfxList.value, result]
+    })
+  }
+
   function signKouseiXml(
     kouseiXml: string,
     applicationFiles: Map<string, string | Uint8Array>,
+    signatureCount = 1,
   ): string {
     if (!parsedPfx.value) {
       throw new Error('PFX証明書が読み込まれていません')
     }
-    return signKousei(kouseiXml, applicationFiles, parsedPfx.value)
+    if (signatureCount <= 1) {
+      return signKousei(kouseiXml, applicationFiles, parsedPfx.value)
+    }
+    // 連署: メイン証明書 + extraPfxList から必要数を取得
+    const pfxList: ParsedPfx[] = [parsedPfx.value, ...extraPfxList.value]
+    if (pfxList.length < signatureCount) {
+      console.warn(`署名者数 ${signatureCount} に対して証明書 ${pfxList.length} 個しかありません。足りない分は最初の証明書で代用します`)
+      while (pfxList.length < signatureCount) pfxList.push(parsedPfx.value)
+    }
+    return signKousei(kouseiXml, applicationFiles, parsedPfx.value, pfxList.slice(0, signatureCount))
   }
 
   return {
     pfxLoaded: readonly(pfxLoaded),
     certSubject: readonly(certSubject),
+    extraPfxCount: computed(() => extraPfxList.value.length),
     loadPfx,
     loadTestPfx,
+    loadExtraPfx,
     signKouseiXml,
   }
 }

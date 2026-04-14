@@ -10,10 +10,10 @@ const DIGEST_ALGO = 'http://www.w3.org/2001/04/xmlenc#sha256'
 /**
  * XML-DSig 署名を生成し、<署名情報> ブロックの XML 文字列を返す
  */
-export function createSignatureBlock(options: SignatureOptions): string {
+export function createSignatureBlock(options: SignatureOptions, idSuffix = ''): string {
   const { pfx, references } = options
 
-  // 1. 各 Reference の DigestValue を��算
+  // 1. 各 Reference の DigestValue を計算
   const referenceXmls = references.map(ref => {
     const digestValue = computeDigest(ref)
     return buildReferenceXml(ref.uri, digestValue, ref.isXml)
@@ -26,7 +26,7 @@ export function createSignatureBlock(options: SignatureOptions): string {
   const canonicalSignedInfo = canonicalize(signedInfoXml)
   const signatureValue = rsaSha256Sign(canonicalSignedInfo, pfx.privateKey)
 
-  // 4. Signature Id = yyyyMMddHHmmss
+  // 4. Signature Id = yyyyMMddHHmmss + suffix（連署時にユニーク化）
   const now = new Date()
   const id = now.getFullYear().toString()
     + String(now.getMonth() + 1).padStart(2, '0')
@@ -34,6 +34,7 @@ export function createSignatureBlock(options: SignatureOptions): string {
     + String(now.getHours()).padStart(2, '0')
     + String(now.getMinutes()).padStart(2, '0')
     + String(now.getSeconds()).padStart(2, '0')
+    + idSuffix
 
   // 5. 完全な ds:Signature XML を組立て
   return buildFullSignatureXml(id, signedInfoXml, signatureValue, pfx.certificateBase64)
@@ -67,30 +68,47 @@ export function insertSignatureIntoKousei(kouseiXml: string, signatureBlockXml: 
 
 /**
  * kousei.xml の構成情報要素と申請書ファイルから署名付き kousei.xml を返す
+ * pfxList で複数証明書を渡すと連署（複数Signature）になる
  */
 export function signKousei(
   kouseiXml: string,
   applicationFiles: Map<string, string | Uint8Array>,
   pfx: SignatureOptions['pfx'],
+  pfxList?: SignatureOptions['pfx'][],
 ): string {
+  const signers = pfxList && pfxList.length > 0 ? pfxList : [pfx]
+
   const references: SignatureReference[] = []
 
-  // Reference 1: 構成情報要素 (URI="#��成情報")
-  // C14N Transform 付き — in-document reference なので canonicalize が必要
+  // Reference 1: 構成情報要素 (URI="#構成情報")
   const canonicalizedKouseiInfo = canonicalizeById(kouseiXml, '構成情報')
   references.push({
     uri: '#%E6%A7%8B%E6%88%90%E6%83%85%E5%A0%B1',
     content: canonicalizedKouseiInfo,
-    isXml: true, // Transform タグを出力
+    isXml: true,
   })
 
-  // Reference 2+: 申請書XMLファイル（ZIP内のファイルはそのまま hash）
+  // Reference 2+: 申請書XMLファイル
   for (const [fileName, content] of applicationFiles) {
     references.push({ uri: fileName, content, isXml: false })
   }
 
-  const signatureBlock = createSignatureBlock({ pfx, references })
-  return insertSignatureIntoKousei(kouseiXml, signatureBlock)
+  // 各署名者で Signature ブロックを生成し、1つの <署名情報> にまとめる
+  const signatureBlocks = signers.map((signerPfx, i) => {
+    const suffix = signers.length > 1 ? String(i + 1) : ''
+    const block = createSignatureBlock({ pfx: signerPfx, references }, suffix)
+    if (i === 0) return block
+    // 2つ目以降: <署名情報>...</署名情報> のラッパーを除去して Signature 要素だけ返す
+    return block.replace(/^<署名情報>/, '').replace(/<\/署名情報>$/, '')
+  })
+
+  // 1つ目のブロック（<署名情報>...<Signature>...</Signature></署名情報>）の閉じタグの前に残りを挿入
+  let combined = signatureBlocks[0]!
+  for (let i = 1; i < signatureBlocks.length; i++) {
+    combined = combined.replace('</署名情報>', signatureBlocks[i] + '</署名情報>')
+  }
+
+  return insertSignatureIntoKousei(kouseiXml, combined)
 }
 
 // --- Internal helpers ---

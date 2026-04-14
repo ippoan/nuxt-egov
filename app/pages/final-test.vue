@@ -5,12 +5,13 @@ import JSZip from 'jszip'
 import { TEST_PROCEDURES, PROCS_WITH_DESTINATION, type TestProcedure } from '~/utils/finalTestProcedures'
 
 const { isAuthenticated, startLogin, apiFetch, getClient } = useEgovAuth()
-const { pfxLoaded, certSubject, loadPfx, loadTestPfx, signKouseiXml } = useXmlSign()
+const { pfxLoaded, certSubject, extraPfxCount, loadPfx, loadTestPfx, loadExtraPfx, signKouseiXml } = useXmlSign()
 
 const useGbizId = ref(false)
 const enableSign = ref(true)
 const pfxPassword = ref('gpkitest')
 const pfxFileInput = ref<HTMLInputElement | null>(null)
+const extraPfxInput = ref<HTMLInputElement | null>(null)
 const pfxError = ref('')
 
 async function handleLoadPfx() {
@@ -25,6 +26,14 @@ async function handleLoadPfx() {
   }
   catch (e: unknown) {
     pfxError.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+async function handleLoadExtraPfx() {
+  const files = extraPfxInput.value?.files
+  if (!files || files.length === 0) return
+  for (const file of files) {
+    await loadExtraPfx(file, pfxPassword.value)
   }
 }
 
@@ -455,7 +464,7 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
           }
 
           currentProc.value = `${proc.no}. 署名付与中...`
-          kouseiXml = signKouseiXml(kouseiXml, appFiles)
+          kouseiXml = signKouseiXml(kouseiXml, appFiles, proc.signatureCount)
           console.log(`[${proc.proc_id}] kousei.xml (signed):`, kouseiXml.substring(0, 3000))
           zip.file(kouseiPath, kouseiXml)
         }
@@ -655,6 +664,16 @@ const doneCount = computed(() => [...results.value.values()].filter(r => r.statu
             </span>
             <span v-if="enableSign && !pfxLoaded && !pfxError" style="color: #ffc107; font-size: 13px;">
               PFXファイルを読み込んでください
+            </span>
+          </div>
+          <div v-if="enableSign && pfxLoaded" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px;">
+            <span style="font-size: 13px; color: #666;">連署用追加証明書:</span>
+            <input ref="extraPfxInput" type="file" accept=".pfx,.p12" multiple style="font-size: 13px;" />
+            <button @click="handleLoadExtraPfx" style="padding: 4px 12px; font-size: 13px; cursor: pointer;">
+              追加読込
+            </button>
+            <span v-if="extraPfxCount > 0" style="color: #28a745; font-size: 13px;">
+              +{{ extraPfxCount }}件
             </span>
           </div>
         </template>
