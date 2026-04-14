@@ -52,8 +52,9 @@ function buildTestValuesFromCheck(checkXml: string): Record<string, string> {
     const intDigitEl = item.querySelector('intDigit > number')
     const intDigit = intDigitEl ? Number(intDigitEl.textContent) : 0
 
-    // タグ名パターンで値を決定
-    const t = tag.toLowerCase()
+    // タグ名パターンで値を決定（/区切りの場合は最後のセグメントで判定）
+    const lastSeg = tag.includes('/') ? tag.split('/').pop()! : tag
+    const t = lastSeg.toLowerCase()
     if (t.includes('年') && !t.includes('氏名') && !t.includes('名称')) {
       values[tag] = isNum ? String(now.getFullYear() % 100) : String(now.getFullYear())
     } else if (t.includes('月') && !t.includes('氏名') && !t.includes('名称')) {
