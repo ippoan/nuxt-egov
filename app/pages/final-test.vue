@@ -156,7 +156,7 @@ function appendLog(proc: TestProcedure, r: ProcedureResult) {
   if (r.error) try { entry.error = JSON.parse(r.error) } catch { entry.error = r.error }
   if (r.debugKouseiXml) entry.kouseiXml = r.debugKouseiXml
   if (r.debugApplyXml) entry.applyXml = r.debugApplyXml
-  errorLog.value = JSON.stringify(entry, null, 2) + '\n---\n' + errorLog.value
+  errorLog.value = errorLog.value + JSON.stringify(entry, null, 2) + '\n---\n'
 }
 
 function copyErrorLog() {
