@@ -10,6 +10,67 @@ function toFullWidth(s: string): string {
   return s.replace(/[\x21-\x7E]/g, c => String.fromCharCode(c.charCodeAt(0) + 0xFEE0))
 }
 
+// checkファイルから必須フィールドを解析し、タグ名+型に応じたテスト値を生成
+function buildTestValuesFromCheck(checkXml: string): Record<string, string> {
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(checkXml, 'text/xml')
+  const items = doc.querySelectorAll('checkItem')
+  const values: Record<string, string> = {}
+  const now = new Date()
+
+  items.forEach((item) => {
+    const tag = item.querySelector('errtag')?.textContent
+    if (!tag) return
+    const required = item.querySelector('omitDisabled') !== null
+    if (!required) return // 必須フィールドのみ
+
+    const isNum = item.querySelector('numerical') !== null
+    const isFullWidth = item.querySelector('fullAllChar') !== null
+    const maxLenEl = item.querySelector('char > range > number')
+    const maxLen = maxLenEl ? Number(maxLenEl.textContent) : 10
+    const intDigitEl = item.querySelector('intDigit > number')
+    const intDigit = intDigitEl ? Number(intDigitEl.textContent) : 0
+
+    // タグ名パターンで値を決定
+    const t = tag.toLowerCase()
+    if (t.includes('年') && !t.includes('氏名') && !t.includes('名称')) {
+      values[tag] = isNum ? String(now.getFullYear() % 100) : String(now.getFullYear())
+    } else if (t.includes('月') && !t.includes('氏名') && !t.includes('名称')) {
+      values[tag] = String(now.getMonth() + 1)
+    } else if (t.includes('日') && !t.includes('氏名') && !t.includes('名称')) {
+      values[tag] = String(now.getDate())
+    } else if (t.includes('郵便番号') && t.includes('親')) {
+      values[tag] = '100'
+    } else if (t.includes('郵便番号') && t.includes('子')) {
+      values[tag] = '0001'
+    } else if (t.includes('所在地') || t.includes('住所')) {
+      values[tag] = isFullWidth ? 'テスト所在地' : 'テスト所在地'
+    } else if (t.includes('名称') || t.includes('事業所名')) {
+      values[tag] = isFullWidth ? 'テスト事業所' : 'テスト事業所'
+    } else if (t.includes('氏名') && t.includes('カナ')) {
+      values[tag] = isFullWidth ? 'テスト　タロウ' : 'テスト タロウ'
+    } else if (t.includes('氏名')) {
+      values[tag] = 'テスト　太郎'
+    } else if (t.includes('記号')) {
+      values[tag] = isNum ? '1' : 'ア'
+    } else if (t.includes('番号') && isNum) {
+      values[tag] = '1'.padStart(intDigit || 1, '0').substring(0, intDigit || 5)
+    } else if (t.includes('番号')) {
+      values[tag] = '0001'
+    } else if (t.includes('件数') || t.includes('人数')) {
+      values[tag] = '0'
+    } else if (isNum) {
+      values[tag] = '1'
+    } else if (isFullWidth) {
+      values[tag] = 'テスト'
+    } else {
+      values[tag] = 'test'
+    }
+  })
+
+  return values
+}
+
 interface ProcedureResult {
   proc_id: string
   status: 'pending' | 'skeleton' | 'submitting' | 'done' | 'error'
@@ -125,7 +186,23 @@ async function submitOne(proc: TestProcedure) {
       }
     }
 
-    // 申請書XMLも空タグはそのまま残す（形式チェックファイルが必須項目を判定するため）
+    // 申請書XML: checkファイルから必須フィールドを解析し、テスト値を自動填入
+    for (const fi of skeleton.results.file_info) {
+      const applyPath = `${proc.proc_id}/${fi.apply_file_name}`
+      const checkPath = `${proc.proc_id}/${fi.form_id}check.xml`
+      const applyFile = zip.file(applyPath)
+      const checkFile = zip.file(checkPath)
+      if (applyFile && checkFile) {
+        let applyXml = await applyFile.async('string')
+        const checkXml = await checkFile.async('string')
+        const testValues = buildTestValuesFromCheck(checkXml)
+        for (const [tag, value] of Object.entries(testValues)) {
+          applyXml = applyXml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
+        }
+        console.log(`[${proc.proc_id}] apply filled ${Object.keys(testValues).length} fields`)
+        zip.file(applyPath, applyXml)
+      }
+    }
 
     const newZipBase64 = await zip.generateAsync({ type: 'base64' })
 
