@@ -40,8 +40,9 @@ e-Gov 電子申請サービスのチェックツール。Nuxt 4 + Cloudflare Wor
 - 提出先情報: テスト手続専用の提出先識別子を使用（本番の提出先一覧D〜Nとは別）
   - `950A...` 系手続: `950API00000000001001001` / `総務省,行政管理局,API`
   - `900A...` 系手続: `900API00000000001001001` / `総務省,行政管理局,API`
-  - Excel参照: `/tmp/kensho-test/egov_applapi_testproclist.xlsx`
-- 添付書類: スケルトンに既にある場合は値を埋める。無い場合は `</提出先情報>` の後に挿入
+  - 提出先が不要な手続（`-`）はkouseiTestValuesで空タグが埋まっても無視される
+  - Excel参照: `/tmp/kensho-test/egov_applapi_testproclist.xlsx`（[検証環境テスト用手続ZIP](https://developer.e-gov.go.jp/contents/specification/document-api/specification.html) 内に同梱）
+- 添付書類: 必須の手続（No.12,13等）は `dummy.txt` を添付し添付書類属性情報を `</提出先情報>` の後に挿入
 - No.22（電子送達）: `/apply` ではなく `/post-apply` エンドポイントを使用
 - 申請書属性情報: `file_info` から自動生成
 - 郵便番号・電話番号は半角のまま（全角変換するとe-Govのマスタチェックでエラー）
