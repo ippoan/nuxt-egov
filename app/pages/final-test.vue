@@ -331,7 +331,15 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
           xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
           xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
         }
-        // SignAttach: 申請書属性情報は入れない（スケルトンの空タグのまま残す）
+        // 添付書類属性情報: 申請書XMLファイルを署名対象として宣言
+        let signAttachBlocks = ''
+        for (const fi of skeleton.results.file_info) {
+          signAttachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>${fi.form_name}</添付書類名称><添付書類ファイル名称>${fi.apply_file_name}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
+        }
+        if (signAttachBlocks) {
+          xml = xml.replace('</管理情報>', '</管理情報>' + signAttachBlocks)
+        }
+        // 申請書属性情報は入れない（スケルトンの空タグのまま残す）
         zip.file(signAttachPath, xml)
       }
     } else {
