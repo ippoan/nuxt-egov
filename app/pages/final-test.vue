@@ -285,13 +285,27 @@ async function submitOne(proc: TestProcedure) {
             xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
             xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
           }
-          // 添付書類属性情報: スケルトンに既にある場合のみ値を埋める（無い場合は追加しない）
+          // 添付書類属性情報: スケルトンに既にある場合のみ値を埋める
           if (xml.includes('<添付書類属性情報>')) {
             xml = xml.replace(/<添付種別\/>/g, '<添付種別>添付</添付種別>')
             const dummyFileName = 'dummy.txt'
             xml = xml.replace(/<添付書類ファイル名称\/>/g, `<添付書類ファイル名称>${dummyFileName}</添付書類ファイル名称>`)
             xml = xml.replace(/<提出情報\/>/g, '<提出情報>1</提出情報>')
             zip.file(`${proc.proc_id}/${dummyFileName}`, 'test')
+          }
+          // 添付書類属性情報がスケルトンに無い場合、添付+ダミーファイルで追加
+          if (!xml.includes('<添付書類属性情報>')) {
+            const dummyFileName = 'dummy.txt'
+            const attachBlock = `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>テスト添付書類１</添付書類名称><添付書類ファイル名称>${dummyFileName}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
+            xml = xml.replace('</管理情報>', '</管理情報>' + attachBlock)
+            zip.file(`${proc.proc_id}/${dummyFileName}`, 'test')
+          }
+          // No.21: 提出先が必要な手続（補正手続）
+          if (proc.expected_state.includes('補正') && !xml.includes('<提出先識別子>4')) {
+            xml = xml.replace(/<提出先識別子\/>/g, `<提出先識別子>${testData.提出先識別子}</提出先識別子>`)
+            xml = xml.replace(/<提出先識別子><\/提出先識別子>/g, `<提出先識別子>${testData.提出先識別子}</提出先識別子>`)
+            xml = xml.replace(/<提出先名称\/>/g, `<提出先名称>${testData.提出先名称}</提出先名称>`)
+            xml = xml.replace(/<提出先名称><\/提出先名称>/g, `<提出先名称>${testData.提出先名称}</提出先名称>`)
           }
           // 標準形式: 申請書属性情報をkousei.xmlに挿入
           if (!xml.includes('<申請書属性情報>') && fi0) {
