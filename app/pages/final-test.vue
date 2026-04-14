@@ -231,8 +231,8 @@ async function submitOne(proc: TestProcedure) {
       }
     }
 
-    // 署名を付与（有効な場合のみ）
-    if (enableSign.value && pfxLoaded.value) {
+    // 署名を付与（署名ON + PFX読込済み + 手続が署名必要な場合のみ）
+    if (enableSign.value && pfxLoaded.value && proc.signatureRequired) {
       for (const configFileName of skeleton.results.configuration_file_name) {
         const kouseiPath = `${proc.proc_id}/${configFileName}`
         const kouseiFile = zip.file(kouseiPath)
