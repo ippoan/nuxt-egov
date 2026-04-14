@@ -2,7 +2,7 @@
 // build: 20260414
 import type { EgovClient } from '@ippoan/egov-shinsei-sdk'
 import JSZip from 'jszip'
-import { TEST_PROCEDURES, type TestProcedure } from '~/utils/finalTestProcedures'
+import { TEST_PROCEDURES, PROCS_WITH_DESTINATION, type TestProcedure } from '~/utils/finalTestProcedures'
 
 const { isAuthenticated, startLogin, apiFetch, getClient } = useEgovAuth()
 const { pfxLoaded, certSubject, loadPfx, signKouseiXml } = useXmlSign()
@@ -192,8 +192,6 @@ async function submitOne(proc: TestProcedure) {
     const zip = await JSZip.loadAsync(zipData)
 
     // 構成管理XML（kousei.xml）の必須フィールドのみに値を入れる
-    // 提出先: テスト手続専用の識別子（950A→950API..., 900A→900API...）
-    const destId = proc.proc_id.startsWith('950A') ? '950API00000000001001001' : '900API00000000001001001'
     const kouseiTestValues: Record<string, string> = {
       受付行政機関ID: '100' + proc.proc_id.substring(0, 3),
       手続ID: proc.proc_id,
@@ -207,8 +205,13 @@ async function submitOne(proc: TestProcedure) {
       電話番号: testData.電話番号,
       電子メールアドレス: testData.電子メールアドレス,
       法人名: testData.法人名,
-      提出先識別子: destId,
-      提出先名称: '総務省,行政管理局,API',
+    }
+
+    // 提出先: Excelで提出先ありの手続のみ設定（不要な手続に入れるとエラー）
+    if (PROCS_WITH_DESTINATION.has(proc.proc_id)) {
+      const destId = proc.proc_id.startsWith('950A') ? '950API00000000001001001' : '900API00000000001001001'
+      kouseiTestValues['提出先識別子'] = destId
+      kouseiTestValues['提出先名称'] = '総務省,行政管理局,API'
     }
 
     const configFiles = skeleton.results.configuration_file_name
@@ -318,8 +321,8 @@ async function submitOne(proc: TestProcedure) {
             xml = xml.replace(/<提出情報\/>/g, '<提出情報>1</提出情報>')
             zip.file(`${proc.proc_id}/${dummyFileName}`, 'test')
           }
-          // 添付書類属性情報がスケルトンに無く、添付必須の手続は追加（</提出先情報>の後に挿入）
-          if (!xml.includes('<添付書類属性情報>') && xml.includes('</提出先情報>')) {
+          // 添付書類属性情報がスケルトンに無い場合: 提出先ありかつ電子送達でない手続のみ追加
+          if (!xml.includes('<添付書類属性情報>') && PROCS_WITH_DESTINATION.has(proc.proc_id) && proc.proc_id !== '900A013800001000') {
             const dummyFileName = 'dummy.txt'
             const attachBlock = `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>テスト添付書類１</添付書類名称><添付書類ファイル名称>${dummyFileName}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
             xml = xml.replace('</提出先情報>', '</提出先情報>' + attachBlock)
@@ -452,6 +455,12 @@ async function submitOne(proc: TestProcedure) {
 
   results.value.set(proc.proc_id, { ...r })
   saveResults()
+}
+
+function copyResult(proc: TestProcedure) {
+  const r = getResult(proc.proc_id)
+  const data = { no: proc.no, proc_id: proc.proc_id, name: proc.name, format: proc.format, status: r.status, arrive_id: r.arrive_id, error: r.error ? JSON.parse(r.error) : undefined }
+  navigator.clipboard.writeText(JSON.stringify(data, null, 2))
 }
 
 async function runAll() {
@@ -687,7 +696,7 @@ const doneCount = computed(() => [...results.value.values()].filter(r => r.statu
             </td>
           </tr>
           <tr v-if="getResult(proc.proc_id).status === 'error'">
-            <td colspan="8" style="border: 1px solid #dee2e6; padding: 4px 8px; background: #fff5f5; color: #dc3545; font-size: 12px; word-break: break-all; white-space: pre-wrap;">
+            <td colspan="8" style="border: 1px solid #dee2e6; padding: 4px 8px; background: #fff5f5; color: #dc3545; font-size: 12px; word-break: break-all; white-space: pre-wrap; cursor: pointer;" @click="copyResult(proc)">
               {{ getResult(proc.proc_id).error }}
             </td>
           </tr>
@@ -736,7 +745,7 @@ const doneCount = computed(() => [...results.value.values()].filter(r => r.statu
             </td>
           </tr>
           <tr v-if="getResult(proc.proc_id).status === 'error'">
-            <td colspan="8" style="border: 1px solid #dee2e6; padding: 4px 8px; background: #fff5f5; color: #dc3545; font-size: 12px; word-break: break-all; white-space: pre-wrap;">
+            <td colspan="8" style="border: 1px solid #dee2e6; padding: 4px 8px; background: #fff5f5; color: #dc3545; font-size: 12px; word-break: break-all; white-space: pre-wrap; cursor: pointer;" @click="copyResult(proc)">
               {{ getResult(proc.proc_id).error }}
             </td>
           </tr>

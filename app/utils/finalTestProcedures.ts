@@ -10,6 +10,17 @@ export interface TestProcedure {
   signatureRequired?: boolean
 }
 
+/** 提出先が必要な手続のproc_id一覧（Excelの提出先カラムが`-`でないもの） */
+export const PROCS_WITH_DESTINATION = new Set([
+  // 標準形式
+  '950A010200003000', '950A010200004000', '900A020700013000', '900A013800001000',
+  // 個別署名形式
+  '950A101810021000', '950A101810022000', '950A101810023000',
+  '950A102810037000', '950A102810040000',
+  '950A102200044000', '950A102200045000', '950A102200046000', '950A102200047000',
+  '950A102810048000', '950A102810049000',
+])
+
 export const TEST_PROCEDURES: TestProcedure[] = [
   // 標準形式 (22件)
   { no: 1, proc_id: '950A010002010000', name: 'ＡＰＩテスト用手続（社会保険関係手続）（通）１００７／ＡＰＩテスト用手続（社会保険関係手続）（通）１００７', format: 'standard', expected_state: '公文書の取得が可能な状態', expected_status: '審査終了', note: '公文書（署名あり）1件', signatureRequired: true },
