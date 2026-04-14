@@ -18,37 +18,15 @@ const running = ref(false)
 const progress = ref(0)
 const currentProc = ref('')
 const delay = ref(2000)
-const showSettings = ref(false)
 
-// 編集可能なテストデータ（localStorageで永続化）
-const testData = reactive({
-  氏名: 'テスト太郎',
-  氏名フリガナ: 'テストタロウ',
-  郵便番号: '1000001',
-  住所: '東京都千代田区千代田１−１',
-  電話番号: '0312345678',
-  電子メールアドレス: 'test@example.com',
-  法人名: 'テスト株式会社',
-  提出先識別子: '49511000010000000003658',
-  提出先名称: '北海道,札幌公共職業安定所',
-})
-
-// localStorage から結果とテストデータを復元
+// localStorage から結果を復元
 onMounted(() => {
   const saved = localStorage.getItem('egov_final_test_results')
   if (saved) {
     const arr: ProcedureResult[] = JSON.parse(saved)
     arr.forEach(r => results.value.set(r.proc_id, r))
   }
-  const savedData = localStorage.getItem('egov_final_test_data')
-  if (savedData) {
-    Object.assign(testData, JSON.parse(savedData))
-  }
 })
-
-function saveTestData() {
-  localStorage.setItem('egov_final_test_data', JSON.stringify(testData))
-}
 
 function saveResults() {
   localStorage.setItem('egov_final_test_results', JSON.stringify([...results.value.values()]))
@@ -78,7 +56,15 @@ async function submitOne(proc: TestProcedure) {
       手続ID: proc.proc_id,
       手続名称: proc.name,
       申請種別: '新規申請',
-      ...testData,
+      氏名: 'テスト太郎',
+      氏名フリガナ: 'テストタロウ',
+      郵便番号: '1000001',
+      住所: '東京都千代田区千代田１−１',
+      電話番号: '0312345678',
+      電子メールアドレス: 'test@example.com',
+      法人名: 'テスト株式会社',
+      提出先識別子: '49511000010000000003658',
+      提出先名称: '北海道,札幌公共職業安定所',
     }
 
     for (const configFileName of skeleton.results.configuration_file_name) {
@@ -93,35 +79,32 @@ async function submitOne(proc: TestProcedure) {
           xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
         }
         // 提出先情報: 自己閉じタグ <提出先情報/> を展開
-        xml = xml.replace('<提出先情報/>', `<提出先情報>\n\t\t\t\t\t\t<提出先識別子>${testData.提出先識別子}</提出先識別子>\n\t\t\t\t\t\t<提出先名称>${testData.提出先名称}</提出先名称>\n\t\t\t\t\t</提出先情報>`)
+        xml = xml.replace('<提出先情報/>', `<提出先情報>\n\t\t\t\t\t\t<提出先識別子>49511000010000000003658</提出先識別子>\n\t\t\t\t\t\t<提出先名称>北海道,札幌公共職業安定所</提出先名称>\n\t\t\t\t\t</提出先情報>`)
         // 提出先情報ブロックが無い場合、<申請書属性情報>の前に挿入
         if (!xml.includes('<提出先情報>')) {
-          const teishutsusakiBlock = `\n\t\t\t\t\t<提出先情報>\n\t\t\t\t\t\t<提出先識別子>${testData.提出先識別子}</提出先識別子>\n\t\t\t\t\t\t<提出先名称>${testData.提出先名称}</提出先名称>\n\t\t\t\t\t</提出先情報>`
+          const teishutsusakiBlock = `\n\t\t\t\t\t<提出先情報>\n\t\t\t\t\t\t<提出先識別子>49511000010000000003658</提出先識別子>\n\t\t\t\t\t\t<提出先名称>北海道,札幌公共職業安定所</提出先名称>\n\t\t\t\t\t</提出先情報>`
           if (xml.includes('<申請書属性情報>')) {
             xml = xml.replace('<申請書属性情報>', teishutsusakiBlock + '\n\t\t\t\t\t<申請書属性情報>')
           } else if (xml.includes('</構成情報>')) {
             xml = xml.replace('</構成情報>', teishutsusakiBlock + '\n\t\t\t\t</構成情報>')
           }
         }
-        // 添付書類属性情報: ダミーファイルを「添付」として登録
-        const dummyFileName = 'dummy.txt'
+        // 添付書類属性情報がスケルトンにない場合、</管理情報>の後に挿入
+        // 添付種別=別送、提出情報=0(未提出)で添付ファイルなしで送信可能
         if (!xml.includes('<添付書類属性情報>')) {
           const attachBlock = `
 \t\t\t\t\t<添付書類属性情報>
-\t\t\t\t\t\t<添付種別>添付</添付種別>
+\t\t\t\t\t\t<添付種別>別送</添付種別>
 \t\t\t\t\t\t<添付書類名称>テスト添付書類１</添付書類名称>
-\t\t\t\t\t\t<添付書類ファイル名称>${dummyFileName}</添付書類ファイル名称>
-\t\t\t\t\t\t<提出情報>1</提出情報>
+\t\t\t\t\t\t<添付書類ファイル名称/>
+\t\t\t\t\t\t<提出情報>0</提出情報>
 \t\t\t\t\t</添付書類属性情報>`
           xml = xml.replace('</管理情報>', '</管理情報>' + attachBlock)
         } else {
-          xml = xml.replace(/<添付種別\/>/g, '<添付種別>添付</添付種別>')
-          xml = xml.replace(/<添付書類ファイル名称\/>/g, `<添付書類ファイル名称>${dummyFileName}</添付書類ファイル名称>`)
-          xml = xml.replace(/<提出情報\/>/g, '<提出情報>1</提出情報>')
+          xml = xml.replace(/<添付種別\/>/g, '<添付種別>別送</添付種別>')
+          xml = xml.replace(/<提出情報\/>/g, '<提出情報>0</提出情報>')
         }
-        // ダミー添付ファイルをZIPに追加
-        zip.file(`${proc.proc_id}/${dummyFileName}`, 'test')
-        // 空タグはそのまま残す
+        // 空タグはそのまま残す（不要な値を入れない）
         zip.file(kouseiPath, xml)
       }
     }
@@ -153,11 +136,12 @@ async function submitOne(proc: TestProcedure) {
   }
   catch (e: unknown) {
     r.status = 'error'
-    const err = e as { data?: { data?: { detail?: string; title?: string } }; message?: string }
-    const detail = err.data?.data?.detail || err.data?.data?.title || err.message || String(e)
+    const err = e as { data?: { data?: Record<string, unknown> }; message?: string }
+    const apiData = err.data?.data
+    const detail = apiData ? JSON.stringify(apiData, null, 2) : err.message || String(e)
     r.error = detail
-    currentProc.value = `${proc.no}. エラー: ${detail}`
-    console.error(`[${proc.proc_id}]`, err.data?.data || e)
+    currentProc.value = `${proc.no}. エラー: ${apiData?.title || apiData?.detail || err.message}`
+    console.error(`[${proc.proc_id}] full error:`, apiData || e)
   }
 
   results.value.set(proc.proc_id, { ...r })
@@ -263,37 +247,9 @@ const doneCount = computed(() => [...results.value.values()].filter(r => r.statu
         <button @click="resetAll" :disabled="running" style="padding: 10px 20px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">
           リセット
         </button>
-        <button @click="showSettings = !showSettings" style="padding: 10px 20px; background: #fd7e14; color: white; border: none; border-radius: 4px; cursor: pointer;">
-          {{ showSettings ? '設定を閉じる' : '申請データ設定' }}
-        </button>
         <span style="margin-left: auto;">
           完了: {{ doneCount }} / {{ TEST_PROCEDURES.length }}
         </span>
-      </div>
-
-      <!-- 申請データ設定パネル -->
-      <div v-if="showSettings" style="padding: 16px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; margin-bottom: 20px;">
-        <h3 style="margin: 0 0 12px 0; font-size: 14px;">申請データ設定（編集後は自動保存）</h3>
-        <div style="display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; align-items: center; font-size: 13px;">
-          <label>氏名:</label>
-          <input v-model="testData.氏名" @change="saveTestData" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px;" />
-          <label>氏名フリガナ:</label>
-          <input v-model="testData.氏名フリガナ" @change="saveTestData" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px;" />
-          <label>郵便番号:</label>
-          <input v-model="testData.郵便番号" @change="saveTestData" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px;" />
-          <label>住所:</label>
-          <input v-model="testData.住所" @change="saveTestData" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px;" />
-          <label>電話番号:</label>
-          <input v-model="testData.電話番号" @change="saveTestData" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px;" />
-          <label>メールアドレス:</label>
-          <input v-model="testData.電子メールアドレス" @change="saveTestData" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px;" />
-          <label>法人名:</label>
-          <input v-model="testData.法人名" @change="saveTestData" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px;" />
-          <label>提出先識別子:</label>
-          <input v-model="testData.提出先識別子" @change="saveTestData" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px; font-family: monospace;" />
-          <label>提出先名称:</label>
-          <input v-model="testData.提出先名称" @change="saveTestData" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px;" />
-        </div>
       </div>
 
       <div v-if="running || currentProc" style="padding: 10px; background: #e9ecef; border-radius: 4px; margin-bottom: 20px;">
@@ -323,8 +279,7 @@ const doneCount = computed(() => [...results.value.values()].filter(r => r.statu
           </tr>
         </thead>
         <tbody>
-          <template v-for="proc in standardProcs" :key="proc.proc_id">
-          <tr>
+          <tr v-for="proc in standardProcs" :key="proc.proc_id">
             <td style="border: 1px solid #dee2e6; padding: 4px; text-align: center;">{{ proc.no }}</td>
             <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 12px;">{{ proc.proc_id }}</td>
             <td style="border: 1px solid #dee2e6; padding: 4px; font-size: 12px;">{{ proc.expected_state }}</td>
@@ -348,12 +303,11 @@ const doneCount = computed(() => [...results.value.values()].filter(r => r.statu
               </button>
             </td>
           </tr>
-          <tr v-if="getResult(proc.proc_id).status === 'error'">
+          <tr v-if="getResult(proc.proc_id).status === 'error'" :key="proc.proc_id + '-err'">
             <td colspan="8" style="border: 1px solid #dee2e6; padding: 4px 8px; background: #fff5f5; color: #dc3545; font-size: 12px; word-break: break-all;">
               {{ getResult(proc.proc_id).error }}
             </td>
           </tr>
-          </template>
         </tbody>
       </table>
 
@@ -372,8 +326,7 @@ const doneCount = computed(() => [...results.value.values()].filter(r => r.statu
           </tr>
         </thead>
         <tbody>
-          <template v-for="proc in individualProcs" :key="proc.proc_id">
-          <tr>
+          <tr v-for="proc in individualProcs" :key="proc.proc_id">
             <td style="border: 1px solid #dee2e6; padding: 4px; text-align: center;">{{ proc.no }}</td>
             <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 12px;">{{ proc.proc_id }}</td>
             <td style="border: 1px solid #dee2e6; padding: 4px; font-size: 12px;">{{ proc.expected_state }}</td>
@@ -397,12 +350,11 @@ const doneCount = computed(() => [...results.value.values()].filter(r => r.statu
               </button>
             </td>
           </tr>
-          <tr v-if="getResult(proc.proc_id).status === 'error'">
+          <tr v-if="getResult(proc.proc_id).status === 'error'" :key="proc.proc_id + '-err'">
             <td colspan="8" style="border: 1px solid #dee2e6; padding: 4px 8px; background: #fff5f5; color: #dc3545; font-size: 12px; word-break: break-all;">
               {{ getResult(proc.proc_id).error }}
             </td>
           </tr>
-          </template>
         </tbody>
       </table>
     </template>

@@ -82,6 +82,10 @@ export function useEgovAuth() {
     refreshToken.value = data.refresh_token
     tokenExpiresAt.value = Date.now() + data.expires_in * 1000
     client.setAccessToken(data.access_token)
+    // CDPデバッグ用: コンソールから window._egovToken でトークン取得可能
+    if (import.meta.client) {
+      (window as any)._egovToken = data.access_token
+    }
   }
 
   function logout() {
@@ -93,6 +97,9 @@ export function useEgovAuth() {
   function getClient(): EgovClient {
     if (accessToken.value) {
       client.setAccessToken(accessToken.value)
+      if (import.meta.client) {
+        (window as any)._egovToken = accessToken.value
+      }
     }
     return client
   }
@@ -102,6 +109,9 @@ export function useEgovAuth() {
       await refreshAccessToken()
     }
     if (!accessToken.value) throw new Error('Not authenticated')
+    if (import.meta.client) {
+      (window as any)._egovToken = accessToken.value
+    }
 
     return $fetch<T>(`/api/egov${path}`, {
       params,
