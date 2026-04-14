@@ -7,12 +7,24 @@
   "assets": {
     "directory": ".output/public"
   },
+  "vars": {
+    "NUXT_PUBLIC_EGOV_CLIENT_ID": "K26XGOmbDusxfKsp",
+    "NUXT_PUBLIC_EGOV_REDIRECT_URI": "https://egov-check.ippoan.org/callback",
+    "NUXT_PUBLIC_EGOV_AUTH_BASE": "https://account2.sbx.e-gov.go.jp/auth",
+    "NUXT_PUBLIC_EGOV_API_BASE": "https://api2.sbx.e-gov.go.jp/shinsei/v2"
+  },
   "routes": [
     { "pattern": "egov-check.ippoan.org", "custom_domain": true }
   ],
   "env": {
     "staging": {
       "name": "egov-check-staging",
+      "vars": {
+        "NUXT_PUBLIC_EGOV_CLIENT_ID": "K26XGOmbDusxfKsp",
+        "NUXT_PUBLIC_EGOV_REDIRECT_URI": "https://egov-check-staging.ippoan.org/callback",
+        "NUXT_PUBLIC_EGOV_AUTH_BASE": "https://account2.sbx.e-gov.go.jp/auth",
+        "NUXT_PUBLIC_EGOV_API_BASE": "https://api2.sbx.e-gov.go.jp/shinsei/v2"
+      },
       "routes": [
         { "pattern": "egov-check-staging.ippoan.org", "custom_domain": true }
       ]
