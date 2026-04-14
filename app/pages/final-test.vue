@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { EgovClient } from '@ippoan/egov-shinsei-sdk'
+import JSZip from 'jszip'
 import { TEST_PROCEDURES, type TestProcedure } from '~/utils/finalTestProcedures'
 
 const { isAuthenticated, startLogin, apiFetch, getClient } = useEgovAuth()
@@ -42,9 +43,36 @@ async function submitOne(proc: TestProcedure) {
   try {
     // 1. スケルトン取得
     currentProc.value = `${proc.no}. スケルトン取得中...`
-    const skeleton = await apiFetch<{ results: { file_data: string; configuration_file_name: string[]; file_info: unknown[] } }>(`/procedure/${proc.proc_id}`)
+    const skeleton = await apiFetch<{ results: { file_data: string; configuration_file_name: string[]; file_info: Array<{ form_id: string; form_version: number; form_name: string; apply_file_name: string }> } }>(`/procedure/${proc.proc_id}`)
 
-    // 2. 申請送信
+    // 2. スケルトンZIP展開 → 申請書XMLにテスト値を入れて再ZIP
+    currentProc.value = `${proc.no}. 申請データ構築中...`
+    const zipData = Uint8Array.from(atob(skeleton.results.file_data), c => c.charCodeAt(0))
+    const zip = await JSZip.loadAsync(zipData)
+
+    // 申請書XMLファイルを見つけてテスト値を入れる
+    for (const fileInfo of skeleton.results.file_info) {
+      const xmlPath = `${proc.proc_id}/${fileInfo.apply_file_name}`
+      const xmlFile = zip.file(xmlPath)
+      if (xmlFile) {
+        let xml = await xmlFile.async('string')
+        // 空の要素にテスト値を入れる: <TagName/> → <TagName>テスト</TagName>
+        // および <TagName></TagName> → <TagName>テスト</TagName>
+        xml = xml.replace(/<([A-Za-z_][\w.-]*)\/>/g, (_, tag) => {
+          // スキーマ参照や名前空間定義はそのまま
+          if (tag.startsWith('xsd:') || tag.startsWith('xs:')) return `<${tag}/>`
+          return `<${tag}>テスト</${tag}>`
+        })
+        xml = xml.replace(/<([A-Za-z_][\w.-]*)><\/\1>/g, (_, tag) => {
+          return `<${tag}>テスト</${tag}>`
+        })
+        zip.file(xmlPath, xml)
+      }
+    }
+
+    const newZipBase64 = await zip.generateAsync({ type: 'base64' })
+
+    // 3. 申請送信
     r.status = 'submitting'
     currentProc.value = `${proc.no}. 申請送信中...`
     const applyResult = await $fetch<{ results: { arrive_id: string } }>('/api/egov/apply', {
@@ -53,7 +81,7 @@ async function submitOne(proc: TestProcedure) {
         proc_id: proc.proc_id,
         send_file: {
           file_name: `${proc.proc_id}.zip`,
-          file_data: skeleton.results.file_data,
+          file_data: newZipBase64,
         },
       },
       headers: {
