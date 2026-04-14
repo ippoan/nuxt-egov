@@ -50,17 +50,51 @@ async function submitOne(proc: TestProcedure) {
     const zipData = Uint8Array.from(atob(skeleton.results.file_data), c => c.charCodeAt(0))
     const zip = await JSZip.loadAsync(zipData)
 
-    // 申請書XMLファイルを見つけてテスト値を入れる
+    // 構成管理XML（kousei.xml）の必須フィールドにテスト値を入れる
+    const kouseiTestValues: Record<string, string> = {
+      受付行政機関ID: '950A01',
+      手続ID: proc.proc_id,
+      手続名称: 'APIテスト用手続',
+      申請種別: '新規申請',
+      氏名: 'テスト太郎',
+      氏名フリガナ: 'テストタロウ',
+      郵便番号: '1000001',
+      住所: '東京都千代田区千代田１−１',
+      電話番号: '0312345678',
+      電子メールアドレス: 'test@example.com',
+      法人名: 'テスト株式会社',
+      法人番号: '1234567890123',
+    }
+
+    for (const configFileName of skeleton.results.configuration_file_name) {
+      const kouseiPath = `${proc.proc_id}/${configFileName}`
+      const kouseiFile = zip.file(kouseiPath)
+      if (kouseiFile) {
+        let xml = await kouseiFile.async('string')
+        for (const [tag, value] of Object.entries(kouseiTestValues)) {
+          xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
+          xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
+        }
+        // 残りの空要素にもフォールバック値
+        xml = xml.replace(/<([^\s/>]+)\/>/g, (m, tag) => {
+          if (tag.includes(':') || tag === '?xml') return m
+          return `<${tag}>テスト</${tag}>`
+        })
+        xml = xml.replace(/<([^\s/>]+)><\/\1>/g, (m, tag) => {
+          return `<${tag}>テスト</${tag}>`
+        })
+        zip.file(kouseiPath, xml)
+      }
+    }
+
+    // 申請書XMLファイルの空要素にもテスト値を入れる
     for (const fileInfo of skeleton.results.file_info) {
       const xmlPath = `${proc.proc_id}/${fileInfo.apply_file_name}`
       const xmlFile = zip.file(xmlPath)
       if (xmlFile) {
         let xml = await xmlFile.async('string')
-        // 空の要素にテスト値を入れる: <TagName/> → <TagName>テスト</TagName>
-        // および <TagName></TagName> → <TagName>テスト</TagName>
-        xml = xml.replace(/<([A-Za-z_][\w.-]*)\/>/g, (_, tag) => {
-          // スキーマ参照や名前空間定義はそのまま
-          if (tag.startsWith('xsd:') || tag.startsWith('xs:')) return `<${tag}/>`
+        xml = xml.replace(/<([A-Za-z_][\w.-]*)\/>/g, (m, tag) => {
+          if (tag.startsWith('xsd:') || tag.startsWith('xs:')) return m
           return `<${tag}>テスト</${tag}>`
         })
         xml = xml.replace(/<([A-Za-z_][\w.-]*)><\/\1>/g, (_, tag) => {
