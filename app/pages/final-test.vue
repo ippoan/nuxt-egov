@@ -54,6 +54,7 @@ async function submitOne(proc: TestProcedure) {
     const kouseiTestValues: Record<string, string> = {
       受付行政機関ID: '100495',
       手続ID: proc.proc_id,
+      手続名称: proc.name,
       申請種別: '新規申請',
       氏名: 'テスト太郎',
       氏名フリガナ: 'テストタロウ',
