@@ -6,6 +6,7 @@ import { TEST_PROCEDURES, type TestProcedure } from '~/utils/finalTestProcedures
 const { isAuthenticated, startLogin, apiFetch, getClient } = useEgovAuth()
 const { pfxLoaded, certSubject, loadPfx, signKouseiXml } = useXmlSign()
 
+const useGbizId = ref(false)
 const enableSign = ref(false)
 const pfxPassword = ref('gpkitest')
 const pfxFileInput = ref<HTMLInputElement | null>(null)
@@ -376,8 +377,10 @@ async function submitOne(proc: TestProcedure) {
     const submitHeaders: Record<string, string> = {
       Authorization: `Bearer ${useEgovAuth().accessToken.value}`,
     }
-    // 署名ONかつ署名必要手続の場合のみTrialなし（本番挙動）。それ以外はTrialで送信。
-    const useRealSubmit = enableSign.value && proc.signatureRequired
+    // GビズIDモード: 署名不要で本番送信（署名省略可の手続は署名なしで成功）
+    // 署名モード: 署名必要手続のみ本番送信
+    // それ以外: Trial送信
+    const useRealSubmit = useGbizId.value || (enableSign.value && proc.signatureRequired)
     if (!useRealSubmit) {
       submitHeaders['X-eGovAPI-Trial'] = 'true'
     }
@@ -502,37 +505,51 @@ const doneCount = computed(() => [...results.value.values()].filter(r => r.statu
       <div style="padding: 16px; background: #f0f4ff; border: 1px solid #b8c9ff; border-radius: 8px; margin-bottom: 20px;">
         <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
           <label style="font-weight: bold;">
-            <input v-model="enableSign" type="checkbox" style="margin-right: 6px;" />
-            電子署名を付与する
+            <input v-model="useGbizId" type="checkbox" style="margin-right: 6px;" />
+            GビズIDアカウント
           </label>
-          <span v-if="enableSign" style="font-size: 12px; color: #666;">
-            (X-eGovAPI-Trial ヘッダーなしで送信)
+          <span v-if="useGbizId" style="font-size: 12px; color: #28a745;">
+            署名省略で本番送信（Trial なし）
           </span>
           <span v-else style="font-size: 12px; color: #999;">
-            (Trial モード — 署名なし)
+            e-Gov アカウント
           </span>
         </div>
-        <div v-if="enableSign" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-          <input ref="pfxFileInput" type="file" accept=".pfx,.p12" style="font-size: 13px;" />
-          <input v-model="pfxPassword" type="password" placeholder="パスワード" style="width: 120px; padding: 4px 8px; font-size: 13px;" />
-          <button @click="handleLoadPfx" style="padding: 4px 12px; font-size: 13px; cursor: pointer;">
-            読込
-          </button>
-          <span v-if="pfxLoaded" style="color: #28a745; font-size: 13px;">
-            {{ certSubject }}
-          </span>
-          <span v-if="pfxError" style="color: #dc3545; font-size: 13px;">
-            {{ pfxError }}
-          </span>
-          <span v-if="enableSign && !pfxLoaded && !pfxError" style="color: #ffc107; font-size: 13px;">
-            PFXファイルを読み込んでください
-          </span>
-        </div>
+        <template v-if="!useGbizId">
+          <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+            <label style="font-weight: bold;">
+              <input v-model="enableSign" type="checkbox" style="margin-right: 6px;" />
+              電子署名を付与する
+            </label>
+            <span v-if="enableSign" style="font-size: 12px; color: #666;">
+              (X-eGovAPI-Trial ヘッダーなしで送信)
+            </span>
+            <span v-else style="font-size: 12px; color: #999;">
+              (Trial モード — 署名なし)
+            </span>
+          </div>
+          <div v-if="enableSign" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <input ref="pfxFileInput" type="file" accept=".pfx,.p12" style="font-size: 13px;" />
+            <input v-model="pfxPassword" type="password" placeholder="パスワード" style="width: 120px; padding: 4px 8px; font-size: 13px;" />
+            <button @click="handleLoadPfx" style="padding: 4px 12px; font-size: 13px; cursor: pointer;">
+              読込
+            </button>
+            <span v-if="pfxLoaded" style="color: #28a745; font-size: 13px;">
+              {{ certSubject }}
+            </span>
+            <span v-if="pfxError" style="color: #dc3545; font-size: 13px;">
+              {{ pfxError }}
+            </span>
+            <span v-if="enableSign && !pfxLoaded && !pfxError" style="color: #ffc107; font-size: 13px;">
+              PFXファイルを読み込んでください
+            </span>
+          </div>
+        </template>
       </div>
 
       <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; align-items: center;">
-        <button @click="runAll" :disabled="running || (enableSign && !pfxLoaded)" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
-          {{ running ? '実行中...' : enableSign ? '全件実行（署名付き）' : '全件実行（Trial）' }}
+        <button @click="runAll" :disabled="running || (!useGbizId && enableSign && !pfxLoaded)" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
+          {{ running ? '実行中...' : useGbizId ? '全件実行（GビズID）' : enableSign ? '全件実行（署名付き）' : '全件実行（Trial）' }}
         </button>
         <button @click="fetchSendNumbers" :disabled="running" style="padding: 10px 20px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer;">
           送信番号取得
