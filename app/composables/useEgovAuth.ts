@@ -24,6 +24,7 @@ export function useEgovAuth() {
 
     sessionStorage.setItem('egov_code_verifier', codeVerifier)
     sessionStorage.setItem('egov_state', state)
+    sessionStorage.setItem('egov_return_to', window.location.pathname)
 
     const url = buildAuthorizationUrl({
       authBase,
