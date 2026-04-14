@@ -44,7 +44,7 @@ async function submitOne(proc: TestProcedure) {
     currentProc.value = `${proc.no}. スケルトン取得中...`
     const skeleton = await apiFetch<{ results: { file_data: string; configuration_file_name: string[]; file_info: unknown[] } }>(`/procedure/${proc.proc_id}`)
 
-    // 2. 申請送信（スケルトンをそのまま送信）
+    // 2. 申請送信
     r.status = 'submitting'
     currentProc.value = `${proc.no}. 申請送信中...`
     const applyResult = await $fetch<{ results: { arrive_id: string } }>('/api/egov/apply', {
@@ -67,8 +67,11 @@ async function submitOne(proc: TestProcedure) {
   }
   catch (e: unknown) {
     r.status = 'error'
-    r.error = e instanceof Error ? e.message : String(e)
-    currentProc.value = `${proc.no}. エラー`
+    const err = e as { data?: { data?: { detail?: string; title?: string } }; message?: string }
+    const detail = err.data?.data?.detail || err.data?.data?.title || err.message || String(e)
+    r.error = detail
+    currentProc.value = `${proc.no}. エラー: ${detail}`
+    console.error(`[${proc.proc_id}]`, err.data?.data || e)
   }
 
   results.value.set(proc.proc_id, { ...r })
