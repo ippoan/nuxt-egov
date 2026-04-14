@@ -298,12 +298,7 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
           xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
           xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
         }
-        // WriteAppli: 申請書属性情報を挿入（申請書作成型では必要）
-        if (fi0 && !xml.includes('<申請書属性情報>')) {
-          const formBlock = `<申請書属性情報><申請書様式ID>${fi0.form_id}</申請書様式ID><申請書様式バージョン>${String(fi0.form_version).padStart(4, '0')}</申請書様式バージョン><申請書様式名称>${fi0.form_name}</申請書様式名称><申請書ファイル名称>${fi0.apply_file_name}</申請書ファイル名称></申請書属性情報>`
-          xml = xml.replace('</構成情報>', formBlock + '</構成情報>')
-        }
-        // 添付書類属性情報・提出先情報は入れない
+        // WriteAppli: 申請書属性情報・添付書類属性情報・提出先情報は入れない（スケルトンの空タグのまま残す）
         zip.file(writeAppliPath, xml)
       }
 
@@ -327,11 +322,7 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
           xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
           xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
         }
-        // SignAttach: 申請書属性情報を挿入（添付書類署名型では申請書XMLへの参照が必要）
-        if (fi0 && !xml.includes('<申請書属性情報>')) {
-          const formBlock = `<申請書属性情報><申請書様式ID>${fi0.form_id}</申請書様式ID><申請書様式バージョン>${String(fi0.form_version).padStart(4, '0')}</申請書様式バージョン><申請書様式名称>${fi0.form_name}</申請書様式名称><申請書ファイル名称>${fi0.apply_file_name}</申請書ファイル名称></申請書属性情報>`
-          xml = xml.replace('</構成情報>', formBlock + '</構成情報>')
-        }
+        // SignAttach: 申請書属性情報は入れない（スケルトンの空タグのまま残す）
         zip.file(signAttachPath, xml)
       }
     } else {
@@ -421,13 +412,13 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
           if (content.trim()) return m // 既に値がある
           const t = tag.toLowerCase()
           let val = ''
-          if (t.includes('scriptcheck')) val = '' // scriptCheckは埋めない
+          if (t.includes('scriptcheck')) val = '1'
           else if (t.includes('配達局番号')) val = '100'
           else if (t.includes('町域番号')) val = '0014'
           else if (t.includes('市外局番')) val = '03'
           else if (t.includes('市内局番')) val = '1234'
           else if (t.includes('加入者番号')) val = '5678'
-          else if (t.includes('カナ住所') || t.includes('住所カナ')) val = 'トウキョウトチヨダクナガタチョウ'
+          else if (t.includes('カナ住所') || t.includes('住所カナ')) val = 'トウキョウト'
           else if (t.includes('カナ名称') || t.includes('名称カナ')) val = 'テスト'
           else if (t.includes('漢字住所')) val = '東京都千代田区永田町'
           else if (t.includes('漢字名称')) val = 'テスト事業所'
