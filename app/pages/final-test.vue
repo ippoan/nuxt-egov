@@ -497,7 +497,8 @@ function copyResult(proc: TestProcedure) {
   if (r.error) try { data.error = JSON.parse(r.error) } catch { data.error = r.error }
   if (r.debugKouseiXml) data.kouseiXml = r.debugKouseiXml
   if (r.debugApplyXml) data.applyXml = r.debugApplyXml
-  navigator.clipboard.writeText(JSON.stringify(data, null, 2))
+  const entry = JSON.stringify(data, null, 2)
+  errorLog.value = entry + '\n---\n' + errorLog.value
 }
 
 async function runAll() {
