@@ -170,6 +170,8 @@ async function submitOne(proc: TestProcedure) {
     const zip = await JSZip.loadAsync(zipData)
 
     // 構成管理XML（kousei.xml）の必須フィールドのみに値を入れる
+    // 提出先: テスト手続専用の識別子（950A→950API..., 900A→900API...）
+    const destId = proc.proc_id.startsWith('950A') ? '950API00000000001001001' : '900API00000000001001001'
     const kouseiTestValues: Record<string, string> = {
       受付行政機関ID: '100' + proc.proc_id.substring(0, 3),
       手続ID: proc.proc_id,
@@ -183,8 +185,8 @@ async function submitOne(proc: TestProcedure) {
       電話番号: testData.電話番号,
       電子メールアドレス: testData.電子メールアドレス,
       法人名: testData.法人名,
-      提出先識別子: testData.提出先識別子,
-      提出先名称: testData.提出先名称,
+      提出先識別子: destId,
+      提出先名称: '総務省,行政管理局,API',
     }
 
     const configFiles = skeleton.results.configuration_file_name
@@ -294,19 +296,12 @@ async function submitOne(proc: TestProcedure) {
             xml = xml.replace(/<提出情報\/>/g, '<提出情報>1</提出情報>')
             zip.file(`${proc.proc_id}/${dummyFileName}`, 'test')
           }
-          // 添付書類属性情報がスケルトンに無い場合、添付+ダミーファイルで追加
-          if (!xml.includes('<添付書類属性情報>')) {
+          // 添付書類属性情報がスケルトンに無く、添付必須の手続は追加（</提出先情報>の後に挿入）
+          if (!xml.includes('<添付書類属性情報>') && xml.includes('</提出先情報>')) {
             const dummyFileName = 'dummy.txt'
             const attachBlock = `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>テスト添付書類１</添付書類名称><添付書類ファイル名称>${dummyFileName}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
-            xml = xml.replace('</管理情報>', '</管理情報>' + attachBlock)
+            xml = xml.replace('</提出先情報>', '</提出先情報>' + attachBlock)
             zip.file(`${proc.proc_id}/${dummyFileName}`, 'test')
-          }
-          // No.21: 提出先が必要な手続（補正手続）
-          if (proc.expected_state.includes('補正') && !xml.includes('<提出先識別子>4')) {
-            xml = xml.replace(/<提出先識別子\/>/g, `<提出先識別子>${testData.提出先識別子}</提出先識別子>`)
-            xml = xml.replace(/<提出先識別子><\/提出先識別子>/g, `<提出先識別子>${testData.提出先識別子}</提出先識別子>`)
-            xml = xml.replace(/<提出先名称\/>/g, `<提出先名称>${testData.提出先名称}</提出先名称>`)
-            xml = xml.replace(/<提出先名称><\/提出先名称>/g, `<提出先名称>${testData.提出先名称}</提出先名称>`)
           }
           // 標準形式: 申請書属性情報をkousei.xmlに挿入
           if (!xml.includes('<申請書属性情報>') && fi0) {
@@ -401,7 +396,9 @@ async function submitOne(proc: TestProcedure) {
       submitHeaders['X-eGovAPI-Trial'] = 'true'
     }
 
-    const applyResult = await $fetch<{ results: { arrive_id: string } }>('/api/egov/apply', {
+    // 電子送達手続は /post-apply エンドポイントを使用
+    const applyEndpoint = proc.proc_id === '900A013800001000' ? '/api/egov/post-apply' : '/api/egov/apply'
+    const applyResult = await $fetch<{ results: { arrive_id: string } }>(applyEndpoint, {
       method: 'POST',
       body: {
         proc_id: proc.proc_id,
