@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// build: 20260414
 import type { EgovClient } from '@ippoan/egov-shinsei-sdk'
 import JSZip from 'jszip'
 import { TEST_PROCEDURES, type TestProcedure } from '~/utils/finalTestProcedures'
