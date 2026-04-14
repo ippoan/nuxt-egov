@@ -197,11 +197,38 @@ async function submitOne(proc: TestProcedure) {
           xml = xml.replace(/<提出情報\/>/g, '<提出情報>1</提出情報>')
           zip.file(`${proc.proc_id}/${dummyFileName}`, 'test')
         }
-        // 申請書属性情報: file_infoから自動生成して挿入
-        if (!xml.includes('<申請書属性情報>') && skeleton.results.file_info.length > 0) {
-          const fi = skeleton.results.file_info[0]!
-          const shinseishoBlock = `\n\t\t\t\t<申請書属性情報>\n\t\t\t\t\t<申請書様式ID>${fi.form_id}</申請書様式ID>\n\t\t\t\t\t<申請書様式バージョン>${String(fi.form_version).padStart(4, '0')}</申請書様式バージョン>\n\t\t\t\t\t<申請書様式名称>${fi.form_name}</申請書様式名称>\n\t\t\t\t\t<申請書ファイル名称>${fi.apply_file_name}</申請書ファイル名称>\n\t\t\t\t</申請書属性情報>`
-          xml = xml.replace('</構成情報>', shinseishoBlock + '\n\t\t\t\t</構成情報>')
+
+        const fi0 = skeleton.results.file_info[0]
+        if (proc.format === 'individual') {
+          // 個別署名形式: kousei.xml（構成管理情報）には申請書属性情報を入れない
+          // 代わりに構成情報XMLを添付書類として登録
+          if (configFileName === 'kousei.xml' && !xml.includes('<添付書類属性情報>') && fi0) {
+            const otherConfigs = skeleton.results.configuration_file_name.filter((n: string) => n !== 'kousei.xml')
+            let attachBlocks = ''
+            // 申請書用構成情報
+            if (otherConfigs[0]) {
+              attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>${fi0.form_name}</添付書類名称><添付書類ファイル名称>${otherConfigs[0]}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
+            }
+            // 添付書類用構成情報
+            if (otherConfigs[1]) {
+              attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名ファイル１</添付書類名称><添付書類ファイル名称>${otherConfigs[1]}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
+            }
+            if (attachBlocks) {
+              xml = xml.replace('</構成情報>', attachBlocks + '</構成情報>')
+            }
+          }
+          // 構成情報XML（kousei.xml以外の1つ目）に申請書属性情報を挿入
+          const applyConfigName = skeleton.results.configuration_file_name[1]
+          if (configFileName === applyConfigName && !xml.includes('<申請書属性情報>') && fi0) {
+            const formBlock = `<申請書属性情報><申請書様式ID>${fi0.form_id}</申請書様式ID><申請書様式バージョン>${String(fi0.form_version).padStart(4, '0')}</申請書様式バージョン><申請書様式名称>${fi0.form_name}</申請書様式名称><申請書ファイル名称>${fi0.apply_file_name}</申請書ファイル名称></申請書属性情報>`
+            xml = xml.replace('</構成情報>', formBlock + '</構成情報>')
+          }
+        } else {
+          // 標準形式: 申請書属性情報をkousei.xmlに挿入
+          if (!xml.includes('<申請書属性情報>') && fi0) {
+            const shinseishoBlock = `\n\t\t\t\t<申請書属性情報>\n\t\t\t\t\t<申請書様式ID>${fi0.form_id}</申請書様式ID>\n\t\t\t\t\t<申請書様式バージョン>${String(fi0.form_version).padStart(4, '0')}</申請書様式バージョン>\n\t\t\t\t\t<申請書様式名称>${fi0.form_name}</申請書様式名称>\n\t\t\t\t\t<申請書ファイル名称>${fi0.apply_file_name}</申請書ファイル名称>\n\t\t\t\t</申請書属性情報>`
+            xml = xml.replace('</構成情報>', shinseishoBlock + '\n\t\t\t\t</構成情報>')
+          }
         }
         // 空タグはそのまま残す（不要な値を入れない）
         zip.file(kouseiPath, xml)
