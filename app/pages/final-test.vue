@@ -57,6 +57,7 @@ function buildTestValuesFromCheck(checkXml: string): Record<string, string> {
 
     // タグ名パターンで値を決定（/区切りの場合は最後のセグメントで判定）
     const lastSeg = tag.includes('/') ? tag.split('/').pop()! : tag
+    const fullTag = tag.toLowerCase()
     const t = lastSeg.toLowerCase()
     if (t.includes('年号')) {
       values[tag] = '令和'
@@ -66,22 +67,43 @@ function buildTestValuesFromCheck(checkXml: string): Record<string, string> {
       values[tag] = String(now.getMonth() + 1)
     } else if (t.includes('日') && !t.includes('氏名') && !t.includes('名称')) {
       values[tag] = String(now.getDate())
+    } else if (t.includes('配達局番号')) {
+      values[tag] = '100'
+    } else if (t.includes('町域番号')) {
+      values[tag] = '0014'
     } else if (t.includes('郵便番号') && t.includes('親')) {
       values[tag] = '100'
     } else if (t.includes('郵便番号') && t.includes('子')) {
       values[tag] = '0014'
+    } else if (t.includes('市外局番')) {
+      values[tag] = '03'
+    } else if (t.includes('市内局番')) {
+      values[tag] = '1234'
+    } else if (t.includes('加入者番号')) {
+      values[tag] = '5678'
     } else if (t.includes('所在地') || t.includes('住所')) {
       values[tag] = '東京都千代田区永田町'
-    } else if (t.includes('名称') || t.includes('事業所名')) {
+    } else if (t.includes('あて先') || t.includes('宛先')) {
+      values[tag] = 'テスト宛先'
+    } else if (t.includes('概要')) {
+      values[tag] = 'テスト事業'
+    } else if (t.includes('種類') || t.includes('業種')) {
+      values[tag] = 'その他'
+    } else if (t.includes('名称') || t.includes('事業所名') || t.includes('事業の名称')) {
       values[tag] = isFullWidth ? 'テスト事業所' : 'テスト事業所'
-    } else if (t.includes('氏名') && t.includes('カナ')) {
-      values[tag] = isFullWidth ? 'テスト　タロウ' : 'テスト タロウ'
+    } else if ((t.includes('フリガナ') || t.includes('カナ')) && (fullTag.includes('氏名') || t.includes('氏名'))) {
+      values[tag] = 'テストタロウ'
+    } else if (t.includes('カナ') || t.includes('フリガナ')) {
+      values[tag] = 'テスト'
     } else if (t.includes('氏名')) {
-      values[tag] = 'テスト　太郎'
+      values[tag] = 'テスト太郎'
+    } else if (t.includes('チェックボックス') || t.includes('チェック')) {
+      values[tag] = '1'
     } else if (t.includes('記号')) {
       values[tag] = isNum ? '1' : 'ア'
+    } else if (t.includes('賃金') || t.includes('金額') || t.includes('見込額')) {
+      values[tag] = '100000'
     } else if (t.includes('番号') && maxLenEl && isEqual) {
-      // char/range/number + equal → exact length required
       values[tag] = '1'.repeat(maxLen)
     } else if (t.includes('番号') && isNum) {
       values[tag] = '1'.padStart(intDigit || 1, '0').substring(0, intDigit || 5)
@@ -342,6 +364,8 @@ async function submitOne(proc: TestProcedure) {
           const actualTag = tag.includes('/') ? tag.split('/').pop()! : tag
           applyXml = applyXml.replace(new RegExp(`<${actualTag}></${actualTag}>`, 'g'), `<${actualTag}>${value}</${actualTag}>`)
         }
+        // 在留期間の年月日は非必須だが、値が入ると日付チェックされるので保護
+        applyXml = applyXml.replace(/<在留期間>([\s\S]*?)<\/在留期間>/g, (m) => m.replace(/<年>/g, '<年_SKIP>').replace(/<\/年>/g, '</年_SKIP>').replace(/<月>/g, '<月_SKIP>').replace(/<\/月>/g, '</月_SKIP>').replace(/<日>/g, '<日_SKIP>').replace(/<\/日>/g, '</日_SKIP>'))
         // 年/月/日はネスト構造で複数存在するため、buildTestValuesでは1回しか置換されない
         // 残った空の年月日タグを全て埋める
         const now = new Date()
@@ -349,6 +373,8 @@ async function submitOne(proc: TestProcedure) {
         applyXml = applyXml.replace(/<年><\/年>/g, '<年>8</年>')
         applyXml = applyXml.replace(/<月><\/月>/g, `<月>${now.getMonth() + 1}</月>`)
         applyXml = applyXml.replace(/<日><\/日>/g, `<日>${now.getDate()}</日>`)
+        // 在留期間タグを復元
+        applyXml = applyXml.replace(/<年_SKIP>/g, '<年>').replace(/<\/年_SKIP>/g, '</年>').replace(/<月_SKIP>/g, '<月>').replace(/<\/月_SKIP>/g, '</月>').replace(/<日_SKIP>/g, '<日>').replace(/<\/日_SKIP>/g, '</日>')
         console.log(`[${proc.proc_id}] apply filled ${Object.keys(testValues).length} fields`)
         zip.file(applyPath, applyXml)
       }
