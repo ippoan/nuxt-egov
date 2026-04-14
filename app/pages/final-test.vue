@@ -323,7 +323,8 @@ const doneCount = computed(() => [...results.value.values()].filter(r => r.statu
           </tr>
         </thead>
         <tbody>
-          <tr v-for="proc in standardProcs" :key="proc.proc_id">
+          <template v-for="proc in standardProcs" :key="proc.proc_id">
+          <tr>
             <td style="border: 1px solid #dee2e6; padding: 4px; text-align: center;">{{ proc.no }}</td>
             <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 12px;">{{ proc.proc_id }}</td>
             <td style="border: 1px solid #dee2e6; padding: 4px; font-size: 12px;">{{ proc.expected_state }}</td>
@@ -347,11 +348,12 @@ const doneCount = computed(() => [...results.value.values()].filter(r => r.statu
               </button>
             </td>
           </tr>
-          <tr v-if="getResult(proc.proc_id).status === 'error'" :key="proc.proc_id + '-err'">
+          <tr v-if="getResult(proc.proc_id).status === 'error'">
             <td colspan="8" style="border: 1px solid #dee2e6; padding: 4px 8px; background: #fff5f5; color: #dc3545; font-size: 12px; word-break: break-all;">
               {{ getResult(proc.proc_id).error }}
             </td>
           </tr>
+          </template>
         </tbody>
       </table>
 
@@ -370,7 +372,8 @@ const doneCount = computed(() => [...results.value.values()].filter(r => r.statu
           </tr>
         </thead>
         <tbody>
-          <tr v-for="proc in individualProcs" :key="proc.proc_id">
+          <template v-for="proc in individualProcs" :key="proc.proc_id">
+          <tr>
             <td style="border: 1px solid #dee2e6; padding: 4px; text-align: center;">{{ proc.no }}</td>
             <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 12px;">{{ proc.proc_id }}</td>
             <td style="border: 1px solid #dee2e6; padding: 4px; font-size: 12px;">{{ proc.expected_state }}</td>
@@ -394,11 +397,12 @@ const doneCount = computed(() => [...results.value.values()].filter(r => r.statu
               </button>
             </td>
           </tr>
-          <tr v-if="getResult(proc.proc_id).status === 'error'" :key="proc.proc_id + '-err'">
+          <tr v-if="getResult(proc.proc_id).status === 'error'">
             <td colspan="8" style="border: 1px solid #dee2e6; padding: 4px 8px; background: #fff5f5; color: #dc3545; font-size: 12px; word-break: break-all;">
               {{ getResult(proc.proc_id).error }}
             </td>
           </tr>
+          </template>
         </tbody>
       </table>
     </template>
