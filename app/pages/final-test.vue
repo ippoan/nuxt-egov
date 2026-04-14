@@ -76,22 +76,25 @@ async function submitOne(proc: TestProcedure) {
           xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
           xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
         }
-        // 添付書類属性情報がスケルトンにない場合、</管理情報>の後に挿入
-        // 添付種別=別送、提出情報=0(未提出)で添付ファイルなしで送信可能
+        // 添付書類属性情報: ダミーファイルを「添付」として登録
+        const dummyFileName = 'dummy.txt'
         if (!xml.includes('<添付書類属性情報>')) {
           const attachBlock = `
 \t\t\t\t\t<添付書類属性情報>
-\t\t\t\t\t\t<添付種別>別送</添付種別>
+\t\t\t\t\t\t<添付種別>添付</添付種別>
 \t\t\t\t\t\t<添付書類名称>テスト添付書類１</添付書類名称>
-\t\t\t\t\t\t<添付書類ファイル名称/>
-\t\t\t\t\t\t<提出情報>0</提出情報>
+\t\t\t\t\t\t<添付書類ファイル名称>${dummyFileName}</添付書類ファイル名称>
+\t\t\t\t\t\t<提出情報>1</提出情報>
 \t\t\t\t\t</添付書類属性情報>`
           xml = xml.replace('</管理情報>', '</管理情報>' + attachBlock)
         } else {
-          xml = xml.replace(/<添付種別\/>/g, '<添付種別>別送</添付種別>')
-          xml = xml.replace(/<提出情報\/>/g, '<提出情報>0</提出情報>')
+          xml = xml.replace(/<添付種別\/>/g, '<添付種別>添付</添付種別>')
+          xml = xml.replace(/<添付書類ファイル名称\/>/g, `<添付書類ファイル名称>${dummyFileName}</添付書類ファイル名称>`)
+          xml = xml.replace(/<提出情報\/>/g, '<提出情報>1</提出情報>')
         }
-        // 空タグはそのまま残す（不要な値を入れない）
+        // ダミー添付ファイルをZIPに追加
+        zip.file(`${proc.proc_id}/${dummyFileName}`, 'test')
+        // 空タグはそのまま残す
         zip.file(kouseiPath, xml)
       }
     }
