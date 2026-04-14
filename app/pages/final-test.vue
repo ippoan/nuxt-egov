@@ -62,7 +62,8 @@ function buildTestValuesFromCheck(checkXml: string): Record<string, string> {
     if (t.includes('年号')) {
       values[tag] = '令和'
     } else if (t.includes('年') && !t.includes('氏名') && !t.includes('名称')) {
-      values[tag] = '8'
+      // intDigit>=4 は西暦（在留期間等）、それ以外は和暦
+      values[tag] = intDigit >= 4 ? String(now.getFullYear()) : '8'
     } else if (t.includes('月') && !t.includes('氏名') && !t.includes('名称')) {
       values[tag] = String(now.getMonth() + 1)
     } else if (t.includes('日') && !t.includes('氏名') && !t.includes('名称')) {
@@ -367,8 +368,6 @@ async function submitOne(proc: TestProcedure) {
           const actualTag = tag.includes('/') ? tag.split('/').pop()! : tag
           applyXml = applyXml.replace(new RegExp(`<${actualTag}></${actualTag}>`, 'g'), `<${actualTag}>${value}</${actualTag}>`)
         }
-        // 在留期間の年月日は非必須だが、値が入ると日付チェックされるので保護
-        applyXml = applyXml.replace(/<在留期間>([\s\S]*?)<\/在留期間>/g, (m) => m.replace(/<年>/g, '<年_SKIP>').replace(/<\/年>/g, '</年_SKIP>').replace(/<月>/g, '<月_SKIP>').replace(/<\/月>/g, '</月_SKIP>').replace(/<日>/g, '<日_SKIP>').replace(/<\/日>/g, '</日_SKIP>'))
         // 年/月/日はネスト構造で複数存在するため、buildTestValuesでは1回しか置換されない
         // 残った空の年月日タグを全て埋める
         const now = new Date()
@@ -376,8 +375,6 @@ async function submitOne(proc: TestProcedure) {
         applyXml = applyXml.replace(/<年><\/年>/g, '<年>8</年>')
         applyXml = applyXml.replace(/<月><\/月>/g, `<月>${now.getMonth() + 1}</月>`)
         applyXml = applyXml.replace(/<日><\/日>/g, `<日>${now.getDate()}</日>`)
-        // 在留期間タグを復元
-        applyXml = applyXml.replace(/<年_SKIP>/g, '<年>').replace(/<\/年_SKIP>/g, '</年>').replace(/<月_SKIP>/g, '<月>').replace(/<\/月_SKIP>/g, '</月>').replace(/<日_SKIP>/g, '<日>').replace(/<\/日_SKIP>/g, '</日>')
         console.log(`[${proc.proc_id}] apply filled ${Object.keys(testValues).length} fields`)
         zip.file(applyPath, applyXml)
       }
