@@ -3,6 +3,7 @@ export default defineEventHandler(async (event) => {
   const apiBase = config.public.egovApiBase as string
   const path = getRouterParam(event, 'path') || ''
   const query = getQuery(event)
+  const method = event.method
 
   const authHeader = getHeader(event, 'authorization')
   if (!authHeader) {
@@ -16,12 +17,25 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  const res = await fetch(url.toString(), {
-    headers: {
-      'Authorization': authHeader,
-    },
-  })
+  const headers: Record<string, string> = {
+    'Authorization': authHeader,
+  }
 
+  let body: string | undefined
+  if (method !== 'GET' && method !== 'HEAD') {
+    const rawBody = await readBody(event)
+    if (rawBody) {
+      body = JSON.stringify(rawBody)
+      headers['Content-Type'] = 'application/json'
+    }
+  }
+
+  const trialHeader = getHeader(event, 'x-egovapi-trial')
+  if (trialHeader) {
+    headers['X-eGovAPI-Trial'] = trialHeader
+  }
+
+  const res = await fetch(url.toString(), { method, headers, body })
   const data = await res.json()
 
   if (!res.ok) {
