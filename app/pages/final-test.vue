@@ -387,17 +387,18 @@ async function submitOne(proc: TestProcedure) {
         for (const [tag, value] of Object.entries(testValues)) {
           // check.xml の / 区切りはネスト構造のパス表現 — 最後のセグメントが実際のタグ名
           const actualTag = tag.includes('/') ? tag.split('/').pop()! : tag
-          applyXml = applyXml.replace(new RegExp(`<${actualTag}></${actualTag}>`, 'g'), `<${actualTag}>${value}</${actualTag}>`)
+          // XMLタグに属性（DispName等）が付いている場合にも対応
+          applyXml = applyXml.replace(new RegExp(`<${actualTag}(\\s[^>]*)?>\\s*</${actualTag}>`, 'g'), (m, attrs) => `<${actualTag}${attrs || ''}>${value}</${actualTag}>`)
         }
         // 年/月/日はネスト構造で複数存在するため、buildTestValuesでは1回しか置換されない
         // 残った空の年月日タグを全て埋める
         const now = new Date()
-        applyXml = applyXml.replace(/<年号><\/年号>/g, '<年号>令和</年号>')
-        applyXml = applyXml.replace(/<年><\/年>/g, '<年>8</年>')
-        applyXml = applyXml.replace(/<月><\/月>/g, `<月>${now.getMonth() + 1}</月>`)
-        applyXml = applyXml.replace(/<日><\/日>/g, `<日>${now.getDate()}</日>`)
+        applyXml = applyXml.replace(/<年号(\s[^>]*)?>(\s*)<\/年号>/g, (m, a) => `<年号${a || ''}>令和</年号>`)
+        applyXml = applyXml.replace(/<年(\s[^>]*)?>(\s*)<\/年>/g, (m, a) => `<年${a || ''}>8</年>`)
+        applyXml = applyXml.replace(/<月(\s[^>]*)?>(\s*)<\/月>/g, (m, a) => `<月${a || ''}>${now.getMonth() + 1}</月>`)
+        applyXml = applyXml.replace(/<日(\s[^>]*)?>(\s*)<\/日>/g, (m, a) => `<日${a || ''}>${now.getDate()}</日>`)
         // 在留期間は非必須だが年月日が入ると日付チェックされる → 西暦4桁に修正
-        applyXml = applyXml.replace(/<在留期間>([\s\S]*?)<\/在留期間>/g, (m) => m.replace(/<年>8<\/年>/, `<年>${now.getFullYear()}</年>`))
+        applyXml = applyXml.replace(/<在留期間>([\s\S]*?)<\/在留期間>/g, (m) => m.replace(/<年([^>]*)>8<\/年>/, `<年$1>${now.getFullYear()}</年>`))
         console.log(`[${proc.proc_id}] apply filled ${Object.keys(testValues).length} fields`)
         zip.file(applyPath, applyXml)
       }
