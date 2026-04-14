@@ -51,7 +51,10 @@ async function submitOne(proc: TestProcedure) {
     const zip = await JSZip.loadAsync(zipData)
 
     // 構成管理XML（kousei.xml）の必須フィールドのみに値を入れる（空タグはそのまま残す）
+    // 受付行政機関IDはproc_idの先頭4文字から組織コードを推定
+    const orgCode = proc.proc_id.substring(0, 4)
     const kouseiTestValues: Record<string, string> = {
+      受付行政機関ID: orgCode,
       手続ID: proc.proc_id,
       手続名称: 'APIテスト用手続',
       申請種別: '新規申請',
@@ -69,6 +72,8 @@ async function submitOne(proc: TestProcedure) {
       const kouseiFile = zip.file(kouseiPath)
       if (kouseiFile) {
         let xml = await kouseiFile.async('string')
+        // デバッグ: kousei.xmlの内容をコンソールに出力
+        console.log(`[${proc.proc_id}] kousei.xml (before):`, xml.substring(0, 2000))
         for (const [tag, value] of Object.entries(kouseiTestValues)) {
           xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
           xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
