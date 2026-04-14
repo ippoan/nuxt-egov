@@ -5,7 +5,7 @@ export default defineEventHandler(async (event) => {
   const clientId = config.public.egovClientId as string
   const clientSecret = config.egovClientSecret as string
   const authBase = config.public.egovAuthBase as string
-  const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64')
+  const basicAuth = btoa(`${clientId}:${clientSecret}`)
 
   const params = new URLSearchParams()
   params.set('grant_type', body.grant_type)

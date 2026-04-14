@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: read
+
+jobs:
+  ci:
+    uses: ippoan/ci-workflows/.github/workflows/frontend-ci.yml@main
+    with:
+      project_type: 'nuxt'
+      install_command: 'npm install'
+      has_tests: false
+      has_deploy: false
+      has_staging_deploy: false
+      npm_scope: '@ippoan'
+      post_install_script: 'npx nuxt prepare'
+    secrets: inherit

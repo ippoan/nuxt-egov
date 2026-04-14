@@ -1,21 +1,22 @@
-interface TokenResponse {
-  access_token: string
-  expires_in: number
-  refresh_expires_in: number
-  refresh_token: string
-  token_type: string
-  id_token: string
-  scope: string
-}
+import { EgovClient, generatePKCE, buildAuthorizationUrl } from '@ippoan/egov-shinsei-sdk'
+import type { TokenResponse } from '@ippoan/egov-shinsei-sdk'
 
 export function useEgovAuth() {
   const config = useRuntimeConfig()
   const authBase = config.public.egovAuthBase as string
+  const clientId = config.public.egovClientId as string
+  const redirectUri = config.public.egovRedirectUri as string
 
   const accessToken = useState<string | null>('egov_access_token', () => null)
   const refreshToken = useState<string | null>('egov_refresh_token', () => null)
   const tokenExpiresAt = useState<number>('egov_token_expires_at', () => 0)
   const isAuthenticated = computed(() => !!accessToken.value && Date.now() < tokenExpiresAt.value)
+
+  const client = new EgovClient({
+    apiBase: '/api/egov',
+    authBase,
+    clientId,
+  })
 
   async function startLogin() {
     const { codeVerifier, codeChallenge } = await generatePKCE()
@@ -24,20 +25,15 @@ export function useEgovAuth() {
     sessionStorage.setItem('egov_code_verifier', codeVerifier)
     sessionStorage.setItem('egov_state', state)
 
-    const clientId = config.public.egovClientId as string
-    const redirectUri = config.public.egovRedirectUri as string
-
-    const params = new URLSearchParams({
-      client_id: clientId,
-      response_type: 'code',
-      scope: 'openid offline_access',
-      redirect_uri: redirectUri,
+    const url = buildAuthorizationUrl({
+      authBase,
+      clientId,
+      redirectUri,
       state,
-      code_challenge: codeChallenge,
-      code_challenge_method: 'S256',
+      codeChallenge,
     })
 
-    window.location.href = `${authBase}/auth?${params}`
+    window.location.href = url
   }
 
   async function handleCallback(code: string, state: string) {
@@ -50,8 +46,6 @@ export function useEgovAuth() {
     if (!codeVerifier) {
       throw new Error('Code verifier not found')
     }
-
-    const redirectUri = config.public.egovRedirectUri as string
 
     const data = await $fetch<TokenResponse>('/api/egov/token', {
       method: 'POST',
@@ -86,12 +80,20 @@ export function useEgovAuth() {
     accessToken.value = data.access_token
     refreshToken.value = data.refresh_token
     tokenExpiresAt.value = Date.now() + data.expires_in * 1000
+    client.setAccessToken(data.access_token)
   }
 
   function logout() {
     accessToken.value = null
     refreshToken.value = null
     tokenExpiresAt.value = 0
+  }
+
+  function getClient(): EgovClient {
+    if (accessToken.value) {
+      client.setAccessToken(accessToken.value)
+    }
+    return client
   }
 
   async function apiFetch<T>(path: string, params?: Record<string, string>): Promise<T> {
@@ -116,5 +118,6 @@ export function useEgovAuth() {
     refreshAccessToken,
     logout,
     apiFetch,
+    getClient,
   }
 }
