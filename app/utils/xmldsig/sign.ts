@@ -44,14 +44,24 @@ export function createSignatureBlock(options: SignatureOptions): string {
  * </構成情報> の後に <署名情報> ���挿入
  */
 export function insertSignatureIntoKousei(kouseiXml: string, signatureBlockXml: string): string {
+  // 署名情報は </構成情報> と <その他> の間に挿入
+  const pattern = '</構成情報>\n\t\t\t\t<その他>'
+  const idx = kouseiXml.indexOf(pattern)
+  if (idx !== -1) {
+    return kouseiXml.substring(0, idx + '</構成情報>'.length)
+      + '\n\t\t\t\t' + signatureBlockXml
+      + '\n\t\t\t\t<その他>'
+      + kouseiXml.substring(idx + pattern.length)
+  }
+  // Fallback: insert after last </構成情報>
   const insertPoint = '</構成情報>'
-  const idx = kouseiXml.lastIndexOf(insertPoint)
-  if (idx === -1) {
+  const fallbackIdx = kouseiXml.lastIndexOf(insertPoint)
+  if (fallbackIdx === -1) {
     throw new Error('kousei.xml に </構成情報> タグが見つかりません')
   }
-  const after = idx + insertPoint.length
+  const after = fallbackIdx + insertPoint.length
   return kouseiXml.substring(0, after)
-    + '\n\t\t' + signatureBlockXml
+    + '\n\t\t\t\t' + signatureBlockXml
     + kouseiXml.substring(after)
 }
 
@@ -69,7 +79,7 @@ export function signKousei(
   // C14N Transform 付き — in-document reference なので canonicalize が必要
   const canonicalizedKouseiInfo = canonicalizeById(kouseiXml, '構成情報')
   references.push({
-    uri: '#構成情報',
+    uri: '#%E6%A7%8B%E6%88%90%E6%83%85%E5%A0%B1',
     content: canonicalizedKouseiInfo,
     isXml: true, // Transform タグを出力
   })
@@ -102,13 +112,13 @@ function computeDigest(ref: SignatureReference): string {
   }
 
   const md = forge.md.sha256.create()
-  md.update(bytes, 'raw')
+  md.update(forge.util.encodeUtf8(bytes), 'raw')
   return forge.util.encode64(md.digest().getBytes())
 }
 
 function rsaSha256Sign(data: string, privateKey: forge.pki.rsa.PrivateKey): string {
   const md = forge.md.sha256.create()
-  md.update(data, 'raw')
+  md.update(forge.util.encodeUtf8(data), 'raw')
   const signature = privateKey.sign(md)
   return forge.util.encode64(signature)
 }
