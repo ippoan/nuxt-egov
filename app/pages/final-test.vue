@@ -50,9 +50,8 @@ async function submitOne(proc: TestProcedure) {
     const zipData = Uint8Array.from(atob(skeleton.results.file_data), c => c.charCodeAt(0))
     const zip = await JSZip.loadAsync(zipData)
 
-    // 構成管理XML（kousei.xml）の必須フィールドにテスト値を入れる
+    // 構成管理XML（kousei.xml）の必須フィールドのみに値を入れる（空タグはそのまま残す）
     const kouseiTestValues: Record<string, string> = {
-      受付行政機関ID: '950A01',
       手続ID: proc.proc_id,
       手続名称: 'APIテスト用手続',
       申請種別: '新規申請',
@@ -63,7 +62,6 @@ async function submitOne(proc: TestProcedure) {
       電話番号: '0312345678',
       電子メールアドレス: 'test@example.com',
       法人名: 'テスト株式会社',
-      法人番号: '1234567890123',
     }
 
     for (const configFileName of skeleton.results.configuration_file_name) {
@@ -75,34 +73,12 @@ async function submitOne(proc: TestProcedure) {
           xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
           xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
         }
-        // 残りの空要素にもフォールバック値
-        xml = xml.replace(/<([^\s/>]+)\/>/g, (m, tag) => {
-          if (tag.includes(':') || tag === '?xml') return m
-          return `<${tag}>テスト</${tag}>`
-        })
-        xml = xml.replace(/<([^\s/>]+)><\/\1>/g, (m, tag) => {
-          return `<${tag}>テスト</${tag}>`
-        })
+        // 空タグはそのまま残す（不要な値を入れない）
         zip.file(kouseiPath, xml)
       }
     }
 
-    // 申請書XMLファイルの空要素にもテスト値を入れる
-    for (const fileInfo of skeleton.results.file_info) {
-      const xmlPath = `${proc.proc_id}/${fileInfo.apply_file_name}`
-      const xmlFile = zip.file(xmlPath)
-      if (xmlFile) {
-        let xml = await xmlFile.async('string')
-        xml = xml.replace(/<([A-Za-z_][\w.-]*)\/>/g, (m, tag) => {
-          if (tag.startsWith('xsd:') || tag.startsWith('xs:')) return m
-          return `<${tag}>テスト</${tag}>`
-        })
-        xml = xml.replace(/<([A-Za-z_][\w.-]*)><\/\1>/g, (_, tag) => {
-          return `<${tag}>テスト</${tag}>`
-        })
-        zip.file(xmlPath, xml)
-      }
-    }
+    // 申請書XMLも空タグはそのまま残す（形式チェックファイルが必須項目を判定するため）
 
     const newZipBase64 = await zip.generateAsync({ type: 'base64' })
 
