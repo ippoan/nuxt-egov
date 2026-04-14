@@ -18,6 +18,25 @@ export function useEgovAuth() {
     clientId,
   })
 
+  // localStorage からトークンを復元（リロード時にログイン不要にする）
+  if (import.meta.client && !accessToken.value) {
+    const saved = localStorage.getItem('egov_tokens')
+    if (saved) {
+      try {
+        const data = JSON.parse(saved)
+        if (data.expiresAt > Date.now()) {
+          accessToken.value = data.accessToken
+          refreshToken.value = data.refreshToken
+          tokenExpiresAt.value = data.expiresAt
+          client.setAccessToken(data.accessToken)
+          ;(window as any)._egovToken = data.accessToken
+        } else if (data.refreshToken) {
+          refreshToken.value = data.refreshToken
+        }
+      } catch { /* ignore corrupt data */ }
+    }
+  }
+
   async function startLogin() {
     const { codeVerifier, codeChallenge } = await generatePKCE()
     const state = crypto.randomUUID()
@@ -82,9 +101,14 @@ export function useEgovAuth() {
     refreshToken.value = data.refresh_token
     tokenExpiresAt.value = Date.now() + data.expires_in * 1000
     client.setAccessToken(data.access_token)
-    // CDPデバッグ用: コンソールから window._egovToken でトークン取得可能
     if (import.meta.client) {
       (window as any)._egovToken = data.access_token
+      // localStorage に永続化（リロード時に復元）
+      localStorage.setItem('egov_tokens', JSON.stringify({
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token,
+        expiresAt: tokenExpiresAt.value,
+      }))
     }
   }
 
@@ -92,6 +116,9 @@ export function useEgovAuth() {
     accessToken.value = null
     refreshToken.value = null
     tokenExpiresAt.value = 0
+    if (import.meta.client) {
+      localStorage.removeItem('egov_tokens')
+    }
   }
 
   function getClient(): EgovClient {

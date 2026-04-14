@@ -265,7 +265,9 @@ async function submitOne(proc: TestProcedure) {
     const submitHeaders: Record<string, string> = {
       Authorization: `Bearer ${useEgovAuth().accessToken.value}`,
     }
-    if (!enableSign.value) {
+    // 署名ONかつ署名必要手続の場合のみTrialなし（本番挙動）。それ以外はTrialで送信。
+    const useRealSubmit = enableSign.value && proc.signatureRequired
+    if (!useRealSubmit) {
       submitHeaders['X-eGovAPI-Trial'] = 'true'
     }
 
