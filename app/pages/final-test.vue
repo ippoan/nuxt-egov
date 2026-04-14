@@ -63,6 +63,8 @@ async function submitOne(proc: TestProcedure) {
       電話番号: '0312345678',
       電子メールアドレス: 'test@example.com',
       法人名: 'テスト株式会社',
+      提出先識別子: '49511000010000000003658',
+      提出先名称: '北海道,札幌公共職業安定所',
     }
 
     for (const configFileName of skeleton.results.configuration_file_name) {
@@ -75,6 +77,17 @@ async function submitOne(proc: TestProcedure) {
         for (const [tag, value] of Object.entries(kouseiTestValues)) {
           xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
           xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
+        }
+        // 提出先情報: 自己閉じタグ <提出先情報/> を展開
+        xml = xml.replace('<提出先情報/>', `<提出先情報>\n\t\t\t\t\t\t<提出先識別子>49511000010000000003658</提出先識別子>\n\t\t\t\t\t\t<提出先名称>北海道,札幌公共職業安定所</提出先名称>\n\t\t\t\t\t</提出先情報>`)
+        // 提出先情報ブロックが無い場合、<申請書属性情報>の前に挿入
+        if (!xml.includes('<提出先情報>')) {
+          const teishutsusakiBlock = `\n\t\t\t\t\t<提出先情報>\n\t\t\t\t\t\t<提出先識別子>49511000010000000003658</提出先識別子>\n\t\t\t\t\t\t<提出先名称>北海道,札幌公共職業安定所</提出先名称>\n\t\t\t\t\t</提出先情報>`
+          if (xml.includes('<申請書属性情報>')) {
+            xml = xml.replace('<申請書属性情報>', teishutsusakiBlock + '\n\t\t\t\t\t<申請書属性情報>')
+          } else if (xml.includes('</構成情報>')) {
+            xml = xml.replace('</構成情報>', teishutsusakiBlock + '\n\t\t\t\t</構成情報>')
+          }
         }
         // 添付書類属性情報: ダミーファイルを「添付」として登録
         const dummyFileName = 'dummy.txt'
