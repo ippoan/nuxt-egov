@@ -759,7 +759,7 @@ const doneCount = computed(() => [...results.value.values()].filter(r => r.statu
             <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 11px;">{{ getResult(proc.proc_id).send_number ?? '' }}</td>
             <td style="border: 1px solid #dee2e6; padding: 4px; text-align: center;">
               <button
-                @click="submitOne(proc, true)"
+                @click="submitOne(proc)"
                 :disabled="running || getResult(proc.proc_id).status === 'done'"
                 style="padding: 2px 8px; font-size: 12px; cursor: pointer;"
               >
@@ -808,7 +808,7 @@ const doneCount = computed(() => [...results.value.values()].filter(r => r.statu
             <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 11px;">{{ getResult(proc.proc_id).send_number ?? '' }}</td>
             <td style="border: 1px solid #dee2e6; padding: 4px; text-align: center;">
               <button
-                @click="submitOne(proc, true)"
+                @click="submitOne(proc)"
                 :disabled="running || getResult(proc.proc_id).status === 'done'"
                 style="padding: 2px 8px; font-size: 12px; cursor: pointer;"
               >
