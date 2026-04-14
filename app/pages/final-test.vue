@@ -207,7 +207,7 @@ async function submitOne(proc: TestProcedure) {
           attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>申請書作成構成情報</添付書類名称><添付書類ファイル名称>${configFiles[1]}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
           // configFiles[2] (SignAttach構成情報)
           attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名構成情報</添付書類名称><添付書類ファイル名称>${configFiles[2]}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
-          xml = xml.replace('</構成情報>', attachBlocks + '</構成情報>')
+          xml = xml.replace('</管理情報>', '</管理情報>' + attachBlocks)
         }
         // 申請書属性情報は入れない（個別署名形式）
         zip.file(mainPath, xml)
