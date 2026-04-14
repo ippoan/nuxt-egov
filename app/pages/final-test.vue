@@ -4,6 +4,27 @@ import JSZip from 'jszip'
 import { TEST_PROCEDURES, type TestProcedure } from '~/utils/finalTestProcedures'
 
 const { isAuthenticated, startLogin, apiFetch, getClient } = useEgovAuth()
+const { pfxLoaded, certSubject, loadPfx, signKouseiXml } = useXmlSign()
+
+const enableSign = ref(false)
+const pfxPassword = ref('gpkitest')
+const pfxFileInput = ref<HTMLInputElement | null>(null)
+const pfxError = ref('')
+
+async function handleLoadPfx() {
+  pfxError.value = ''
+  const file = pfxFileInput.value?.files?.[0]
+  if (!file) {
+    pfxError.value = 'PFXファイルを選択してください'
+    return
+  }
+  try {
+    await loadPfx(file, pfxPassword.value)
+  }
+  catch (e: unknown) {
+    pfxError.value = e instanceof Error ? e.message : String(e)
+  }
+}
 
 // 半角英数記号→全角変換（e-Gov XMLは全角のみ許可のフィールドがある）
 function toFullWidth(s: string): string {
@@ -210,11 +231,44 @@ async function submitOne(proc: TestProcedure) {
       }
     }
 
+    // 署名を付与（有効な場合のみ）
+    if (enableSign.value && pfxLoaded.value) {
+      for (const configFileName of skeleton.results.configuration_file_name) {
+        const kouseiPath = `${proc.proc_id}/${configFileName}`
+        const kouseiFile = zip.file(kouseiPath)
+        if (kouseiFile) {
+          let kouseiXml = await kouseiFile.async('string')
+
+          // 申請書XMLファイルを収集（署名 Reference 用）
+          const appFiles = new Map<string, string | Uint8Array>()
+          for (const fi of skeleton.results.file_info) {
+            const appPath = `${proc.proc_id}/${fi.apply_file_name}`
+            const appFile = zip.file(appPath)
+            if (appFile) {
+              appFiles.set(fi.apply_file_name, await appFile.async('string'))
+            }
+          }
+
+          currentProc.value = `${proc.no}. 署名付与中...`
+          kouseiXml = signKouseiXml(kouseiXml, appFiles)
+          console.log(`[${proc.proc_id}] kousei.xml (signed):`, kouseiXml.substring(0, 3000))
+          zip.file(kouseiPath, kouseiXml)
+        }
+      }
+    }
+
     const newZipBase64 = await zip.generateAsync({ type: 'base64' })
 
     // 3. 申請送信
     r.status = 'submitting'
     currentProc.value = `${proc.no}. 申請送信中...`
+    const submitHeaders: Record<string, string> = {
+      Authorization: `Bearer ${useEgovAuth().accessToken.value}`,
+    }
+    if (!enableSign.value) {
+      submitHeaders['X-eGovAPI-Trial'] = 'true'
+    }
+
     const applyResult = await $fetch<{ results: { arrive_id: string } }>('/api/egov/apply', {
       method: 'POST',
       body: {
@@ -224,10 +278,7 @@ async function submitOne(proc: TestProcedure) {
           file_data: newZipBase64,
         },
       },
-      headers: {
-        Authorization: `Bearer ${useEgovAuth().accessToken.value}`,
-        'X-eGovAPI-Trial': 'true',
-      },
+      headers: submitHeaders,
     })
 
     r.arrive_id = applyResult.results.arrive_id
@@ -334,9 +385,41 @@ const doneCount = computed(() => [...results.value.values()].filter(r => r.statu
     </div>
 
     <template v-else>
+      <!-- 電子署名設定 -->
+      <div style="padding: 16px; background: #f0f4ff; border: 1px solid #b8c9ff; border-radius: 8px; margin-bottom: 20px;">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+          <label style="font-weight: bold;">
+            <input v-model="enableSign" type="checkbox" style="margin-right: 6px;" />
+            電子署名を付与する
+          </label>
+          <span v-if="enableSign" style="font-size: 12px; color: #666;">
+            (X-eGovAPI-Trial ヘッダーなしで送信)
+          </span>
+          <span v-else style="font-size: 12px; color: #999;">
+            (Trial モード — 署名なし)
+          </span>
+        </div>
+        <div v-if="enableSign" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+          <input ref="pfxFileInput" type="file" accept=".pfx,.p12" style="font-size: 13px;" />
+          <input v-model="pfxPassword" type="password" placeholder="パスワード" style="width: 120px; padding: 4px 8px; font-size: 13px;" />
+          <button @click="handleLoadPfx" style="padding: 4px 12px; font-size: 13px; cursor: pointer;">
+            読込
+          </button>
+          <span v-if="pfxLoaded" style="color: #28a745; font-size: 13px;">
+            {{ certSubject }}
+          </span>
+          <span v-if="pfxError" style="color: #dc3545; font-size: 13px;">
+            {{ pfxError }}
+          </span>
+          <span v-if="enableSign && !pfxLoaded && !pfxError" style="color: #ffc107; font-size: 13px;">
+            PFXファイルを読み込んでください
+          </span>
+        </div>
+      </div>
+
       <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; align-items: center;">
-        <button @click="runAll" :disabled="running" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
-          {{ running ? '実行中...' : '全件実行' }}
+        <button @click="runAll" :disabled="running || (enableSign && !pfxLoaded)" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
+          {{ running ? '実行中...' : enableSign ? '全件実行（署名付き）' : '全件実行（Trial）' }}
         </button>
         <button @click="fetchSendNumbers" :disabled="running" style="padding: 10px 20px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer;">
           送信番号取得
