@@ -15,6 +15,7 @@ jobs:
     uses: ippoan/ci-workflows/.github/workflows/frontend-ci.yml@main
     with:
       project_type: 'nuxt'
+      install_command: 'npm install'
       has_tests: false
       has_deploy: false
       has_staging_deploy: false
