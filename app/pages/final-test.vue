@@ -1,11 +1,11 @@
 <script setup lang="ts">
-// build: 20260414
+// build: 20260415
 import type { EgovClient } from '@ippoan/egov-shinsei-sdk'
 import JSZip from 'jszip'
 import { TEST_PROCEDURES, PROCS_WITH_DESTINATION, type TestProcedure } from '~/utils/finalTestProcedures'
 
 const { isAuthenticated, startLogin, apiFetch, getClient } = useEgovAuth()
-const { pfxLoaded, certSubject, extraPfxCount, loadPfx, loadTestPfx, loadExtraPfx, signKouseiXml } = useXmlSign()
+const { pfxLoaded, certSubject, extraPfxCount, loadPfx, loadTestPfx, loadExtraPfx, signKouseiXml, signConfigXml } = useXmlSign()
 
 const useGbizId = ref(false)
 const enableSign = ref(true)
@@ -281,6 +281,8 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
           attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>申請書作成構成情報</添付書類名称><添付書類ファイル名称>${configFiles[1]}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
           // configFiles[2] (SignAttach構成情報)
           attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名構成情報</添付書類名称><添付書類ファイル名称>${configFiles[2]}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
+          // 添付書類署名ファイル（ダミー添付ファイル — SignAttach構成情報から参照される）
+          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名ファイル１</添付書類名称><添付書類ファイル名称>dummy.txt</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
           xml = xml.replace('</管理情報>', '</管理情報>' + attachBlocks)
         }
         // 申請書属性情報は入れない（個別署名形式）
@@ -331,17 +333,16 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
           xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
           xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
         }
-        // 添付書類属性情報: 申請書XMLファイルを署名対象として宣言
-        let signAttachBlocks = ''
-        for (const fi of skeleton.results.file_info) {
-          signAttachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>${fi.form_name}</添付書類名称><添付書類ファイル名称>${fi.apply_file_name}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
+        // 添付書類属性情報を挿入（仕様: 添付書類の場合は設定必須）
+        if (!xml.includes('<添付書類属性情報>')) {
+          const attachBlock = `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名ファイル１</添付書類名称><添付書類ファイル名称>dummy.txt</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
+          xml = xml.replace('</管理情報>', '</管理情報>' + attachBlock)
         }
-        if (signAttachBlocks) {
-          xml = xml.replace('</管理情報>', '</管理情報>' + signAttachBlocks)
-        }
-        // 申請書属性情報は入れない（スケルトンの空タグのまま残す）
+        // 個人情報・提出先情報は入れない
         zip.file(signAttachPath, xml)
       }
+      // ダミー添付ファイルをZIPに追加（添付書類署名対象）
+      zip.file(`${proc.proc_id}/dummy.txt`, 'test')
     } else {
       // 標準形式: 既存ロジック（全configFileに同じkouseiTestValuesを適用）
       for (const configFileName of configFiles) {
@@ -455,26 +456,74 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
 
     // 署名を付与（署名ON + PFX読込済み + 手続が署名必要な場合のみ）
     if (enableSign.value && pfxLoaded.value && proc.signatureRequired) {
-      for (const configFileName of skeleton.results.configuration_file_name) {
-        const kouseiPath = `${proc.proc_id}/${configFileName}`
-        const kouseiFile = zip.file(kouseiPath)
-        if (kouseiFile) {
-          let kouseiXml = await kouseiFile.async('string')
+      if (proc.format === 'individual' && configFiles.length >= 3) {
+        // 個別署名形式: 各構成情報ファイルを異なる方法で署名
 
-          // 申請書XMLファイルを収集（署名 Reference 用）
+        // --- Main kousei.xml: #構成情報 + 申請書ファイル参照 ---
+        const mainSignPath = `${proc.proc_id}/${configFiles[0]}`
+        const mainSignFile = zip.file(mainSignPath)
+        if (mainSignFile) {
+          let mainSignXml = await mainSignFile.async('string')
           const appFiles = new Map<string, string | Uint8Array>()
           for (const fi of skeleton.results.file_info) {
-            const appPath = `${proc.proc_id}/${fi.apply_file_name}`
-            const appFile = zip.file(appPath)
-            if (appFile) {
-              appFiles.set(fi.apply_file_name, await appFile.async('string'))
-            }
+            const appFile = zip.file(`${proc.proc_id}/${fi.apply_file_name}`)
+            if (appFile) appFiles.set(fi.apply_file_name, await appFile.async('string'))
           }
+          currentProc.value = `${proc.no}. メイン署名付与中...`
+          mainSignXml = signKouseiXml(mainSignXml, appFiles, proc.signatureCount)
+          console.log(`[${proc.proc_id}] main kousei.xml (signed):`, mainSignXml.substring(0, 3000))
+          zip.file(mainSignPath, mainSignXml)
+        }
 
-          currentProc.value = `${proc.no}. 署名付与中...`
-          kouseiXml = signKouseiXml(kouseiXml, appFiles, proc.signatureCount)
-          console.log(`[${proc.proc_id}] kousei.xml (signed):`, kouseiXml.substring(0, 3000))
-          zip.file(kouseiPath, kouseiXml)
+        // --- WriteAppli: 申請書ファイル1つだけ参照（C14N Transform なし）---
+        const waSignPath = `${proc.proc_id}/${configFiles[1]}`
+        const waSignFile = zip.file(waSignPath)
+        if (waSignFile && fi0) {
+          let waXml = await waSignFile.async('string')
+          const applyFile = zip.file(`${proc.proc_id}/${fi0.apply_file_name}`)
+          if (applyFile) {
+            const applyContent = await applyFile.async('string')
+            currentProc.value = `${proc.no}. WriteAppli署名付与中...`
+            waXml = signConfigXml(waXml, fi0.apply_file_name, applyContent)
+            console.log(`[${proc.proc_id}] WriteAppli (signed):`, waXml.substring(0, 3000))
+            zip.file(waSignPath, waXml)
+          }
+        }
+
+        // --- SignAttach: 添付ファイル(dummy.txt)を参照（C14N Transform なし）---
+        const saSignPath = `${proc.proc_id}/${configFiles[2]}`
+        const saSignFile = zip.file(saSignPath)
+        if (saSignFile) {
+          let saXml = await saSignFile.async('string')
+          const dummyFile = zip.file(`${proc.proc_id}/dummy.txt`)
+          if (dummyFile) {
+            const dummyContent = await dummyFile.async('string')
+            currentProc.value = `${proc.no}. SignAttach署名付与中...`
+            saXml = signConfigXml(saXml, 'dummy.txt', dummyContent)
+            console.log(`[${proc.proc_id}] SignAttach (signed):`, saXml.substring(0, 3000))
+            zip.file(saSignPath, saXml)
+          }
+        }
+      } else {
+        // 標準形式: 既存の統一署名ロジック
+        for (const configFileName of skeleton.results.configuration_file_name) {
+          const kouseiPath = `${proc.proc_id}/${configFileName}`
+          const kouseiFile = zip.file(kouseiPath)
+          if (kouseiFile) {
+            let kouseiXml = await kouseiFile.async('string')
+            const appFiles = new Map<string, string | Uint8Array>()
+            for (const fi of skeleton.results.file_info) {
+              const appPath = `${proc.proc_id}/${fi.apply_file_name}`
+              const appFile = zip.file(appPath)
+              if (appFile) {
+                appFiles.set(fi.apply_file_name, await appFile.async('string'))
+              }
+            }
+            currentProc.value = `${proc.no}. 署名付与中...`
+            kouseiXml = signKouseiXml(kouseiXml, appFiles, proc.signatureCount)
+            console.log(`[${proc.proc_id}] kousei.xml (signed):`, kouseiXml.substring(0, 3000))
+            zip.file(kouseiPath, kouseiXml)
+          }
         }
       }
     }

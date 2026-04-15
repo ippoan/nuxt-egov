@@ -1,5 +1,5 @@
 import { parsePfx } from '~/utils/xmldsig/pfx'
-import { signKousei } from '~/utils/xmldsig/sign'
+import { signConfig, signKousei } from '~/utils/xmldsig/sign'
 import type { ParsedPfx } from '~/utils/xmldsig/types'
 
 // 検証環境テスト用証明書 (e-GovEE01_sha2.pfx, pw: gpkitest)
@@ -60,6 +60,17 @@ export function useXmlSign() {
     return signKousei(kouseiXml, applicationFiles, parsedPfx.value, pfxList.slice(0, signatureCount))
   }
 
+  function signConfigXml(
+    configXml: string,
+    referencedFileName: string,
+    referencedFileContent: string | Uint8Array,
+  ): string {
+    if (!parsedPfx.value) {
+      throw new Error('PFX証明書が読み込まれていません')
+    }
+    return signConfig(configXml, referencedFileName, referencedFileContent, parsedPfx.value)
+  }
+
   return {
     pfxLoaded: readonly(pfxLoaded),
     certSubject: readonly(certSubject),
@@ -68,5 +79,6 @@ export function useXmlSign() {
     loadTestPfx,
     loadExtraPfx,
     signKouseiXml,
+    signConfigXml,
   }
 }
