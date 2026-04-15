@@ -475,20 +475,7 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
           zip.file(mainSignPath, mainSignXml)
         }
 
-        // --- WriteAppli: 申請書ファイル1つだけ参照（C14N Transform なし）---
-        const waSignPath = `${proc.proc_id}/${configFiles[1]}`
-        const waSignFile = zip.file(waSignPath)
-        if (waSignFile && fi0) {
-          let waXml = await waSignFile.async('string')
-          const applyFile = zip.file(`${proc.proc_id}/${fi0.apply_file_name}`)
-          if (applyFile) {
-            const applyContent = await applyFile.async('string')
-            currentProc.value = `${proc.no}. WriteAppli署名付与中...`
-            waXml = signConfigXml(waXml, fi0.apply_file_name, applyContent)
-            console.log(`[${proc.proc_id}] WriteAppli (signed):`, waXml.substring(0, 3000))
-            zip.file(waSignPath, waXml)
-          }
-        }
+        // WriteAppli: 署名不要（署名するとファイル添付必須エラーになる）
 
         // --- SignAttach: 添付ファイル(dummy.txt)を参照（C14N Transform なし）---
         const saSignPath = `${proc.proc_id}/${configFiles[2]}`
