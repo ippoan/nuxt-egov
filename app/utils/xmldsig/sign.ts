@@ -93,6 +93,23 @@ export function signKousei(
   return insertSignatureIntoKousei(kouseiXml, signatureBlock)
 }
 
+/**
+ * 構成情報ファイル（WriteAppli / SignAttach）用の署名
+ * signKousei との違い: #構成情報 Reference なし、C14N Transform なし、Reference 1つのみ
+ */
+export function signConfig(
+  configXml: string,
+  referencedFileName: string,
+  referencedFileContent: string | Uint8Array,
+  pfx: SignatureOptions['pfx'],
+): string {
+  const references: SignatureReference[] = [
+    { uri: referencedFileName, content: referencedFileContent, isXml: false },
+  ]
+  const signatureBlock = createSignatureBlock({ pfx, references })
+  return insertSignatureIntoKousei(configXml, signatureBlock)
+}
+
 // --- Internal helpers ---
 
 function computeDigest(ref: SignatureReference): string {
