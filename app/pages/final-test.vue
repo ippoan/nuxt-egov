@@ -471,7 +471,7 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
     // 署名を付与（署名ON + PFX読込済み + 手続が署名必要な場合のみ）
     if (enableSign.value && pfxLoaded.value && proc.signatureRequired) {
       if (proc.format === 'individual' && configFiles.length >= 3) {
-        // 個別署名形式: 各構成情報ファイルを異なる方法で署名
+        // 個別署名形式: <署名情報> があるファイルのみ署名
 
         // --- Main kousei.xml: #構成情報 + 申請書ファイル参照 ---
         const mainSignPath = `${proc.proc_id}/${configFiles[0]}`
@@ -489,9 +489,22 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
           zip.file(mainSignPath, mainSignXml)
         }
 
-        // WriteAppli: 署名不要（署名するとファイル添付必須エラーになる）
+        // --- WriteAppli: 申請書ファイルを参照して署名 ---
+        const waSignPath = `${proc.proc_id}/${configFiles[1]}`
+        const waSignFile = zip.file(waSignPath)
+        if (waSignFile && fi0) {
+          let waXml = await waSignFile.async('string')
+          const applyFile = zip.file(`${proc.proc_id}/${fi0.apply_file_name}`)
+          if (applyFile) {
+            const applyContent = await applyFile.async('string')
+            currentProc.value = `${proc.no}. WriteAppli署名付与中...`
+            waXml = signConfigXml(waXml, fi0.apply_file_name, applyContent)
+            console.log(`[${proc.proc_id}] WriteAppli (signed):`, waXml.substring(0, 3000))
+            zip.file(waSignPath, waXml)
+          }
+        }
 
-        // --- SignAttach: 添付ファイル(dummy.txt)を参照（C14N Transform なし）---
+        // --- SignAttach: dummy.txt を参照して署名 ---
         const saSignPath = `${proc.proc_id}/${configFiles[2]}`
         const saSignFile = zip.file(saSignPath)
         if (saSignFile) {
