@@ -111,7 +111,7 @@ export function signKousei(
 
 /**
  * 構成情報ファイル（WriteAppli / SignAttach）用の署名
- * signKousei との違い: #構成情報 Reference なし、C14N Transform なし、Reference 1つのみ
+ * signKousei と同様に #構成情報 Reference + ファイル Reference の2つ（XSD が最低2つ要求）
  */
 export function signConfig(
   configXml: string,
@@ -119,9 +119,19 @@ export function signConfig(
   referencedFileContent: string | Uint8Array,
   pfx: SignatureOptions['pfx'],
 ): string {
-  const references: SignatureReference[] = [
-    { uri: referencedFileName, content: referencedFileContent, isXml: false },
-  ]
+  const references: SignatureReference[] = []
+
+  // Reference 1: 構成情報要素 (URI="#構成情報") — C14N Transform 付き
+  const canonicalizedKouseiInfo = canonicalizeById(configXml, '構成情報')
+  references.push({
+    uri: '#%E6%A7%8B%E6%88%90%E6%83%85%E5%A0%B1',
+    content: canonicalizedKouseiInfo,
+    isXml: true,
+  })
+
+  // Reference 2: 対象ファイル（申請書 or 添付書類）
+  references.push({ uri: referencedFileName, content: referencedFileContent, isXml: false })
+
   const signatureBlock = createSignatureBlock({ pfx, references })
   return insertSignatureIntoKousei(configXml, signatureBlock)
 }
