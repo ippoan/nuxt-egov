@@ -309,11 +309,7 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
           xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
           xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
         }
-        // 申請書属性情報を挿入（仕様: 申請書の場合は設定必須）
-        if (fi0 && !xml.includes('<申請書属性情報>')) {
-          const formBlock = `<申請書属性情報><申請書様式ID>${fi0.form_id}</申請書様式ID><申請書様式バージョン>${String(fi0.form_version).padStart(4, '0')}</申請書様式バージョン><申請書様式名称>${fi0.form_name}</申請書様式名称><申請書ファイル名称>${fi0.apply_file_name}</申請書ファイル名称></申請書属性情報>`
-          xml = xml.replace('</構成情報>', formBlock + '</構成情報>')
-        }
+        // WriteAppli: 申請書属性情報・添付書類属性情報・提出先情報は入れない（スケルトンの空タグのまま残す）
         zip.file(writeAppliPath, xml)
       }
 
