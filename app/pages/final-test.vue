@@ -969,8 +969,8 @@ async function runInquiryTest(item: InquiryTestItem) {
         break
       }
       case '09-1': {
-        // 再提出: 07-1 の arrive_id を初回受付番号として再提出
-        const aid09 = inquiryState.arriveId_07_1
+        // 再提出: 07-2 の arrive_id を初回受付番号として再提出
+        const aid09 = inquiryState.arriveId_07_2 || inquiryState.arriveId_07_1
         if (!aid09) throw new Error('07-1を先に実行してください')
         const procId09 = '900A020700013000'
         const sk09 = await apiFetch<{ results: { file_data: string; configuration_file_name: string[]; file_info: Array<{ form_id: string; form_version: number; form_name: string; apply_file_name: string }> } }>(`/procedure/${procId09}`)
