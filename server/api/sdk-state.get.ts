@@ -4,16 +4,21 @@ import { resolve } from 'path'
 export default defineEventHandler(() => {
   const sdkBase = '/home/yhonda/js/egov-shinsei-sdk'
 
-  // 1. SDK テスト結果 (.test-state.json)
-  const statePath = resolve(sdkBase, 'coverage/.test-state.json')
+  // 1. SDK テスト結果 (.test-state.json) — メイン + worktree 両方読む
+  const statePaths = [
+    resolve(sdkBase, 'coverage/.test-state.json'),
+    resolve(sdkBase, '.claude/worktrees/sdk-auto-prepared/coverage/.test-state.json'),
+  ]
   const state: Record<string, string> = {}
-  if (existsSync(statePath)) {
-    const raw = JSON.parse(readFileSync(statePath, 'utf-8'))
-    for (const [k, v] of Object.entries(raw)) {
-      if (!k.startsWith('zipBase64') && !k.startsWith('zipBuffer') &&
-          !k.startsWith('procResult') && k !== 'accessToken' &&
-          !k.startsWith('officialDoc')) {
-        state[k] = String(v)
+  for (const statePath of statePaths) {
+    if (existsSync(statePath)) {
+      const raw = JSON.parse(readFileSync(statePath, 'utf-8'))
+      for (const [k, v] of Object.entries(raw)) {
+        if (!k.startsWith('zipBase64') && !k.startsWith('zipBuffer') &&
+            !k.startsWith('procResult') && k !== 'accessToken' &&
+            !k.startsWith('officialDoc')) {
+          state[k] = String(v)
+        }
       }
     }
   }

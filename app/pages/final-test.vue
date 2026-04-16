@@ -770,15 +770,15 @@ onMounted(async () => {
     const arr: InquiryResult[] = JSON.parse(saved)
     arr.forEach(r => inquiryResults.value.set(r.test_no, r))
   }
-  // 1. SDK テスト結果 + テストデータ情報をロード
+  // 1. localStorage の保存分をまず読む
+  const savedState = localStorage.getItem('egov_inquiry_state')
+  if (savedState) Object.assign(inquiryState, JSON.parse(savedState))
+  // 2. SDK テスト結果で上書き（SDK の方が信頼性が高い）
   try {
     const sdk = await $fetch<{ state: Record<string, string>; testData: any[] }>('/api/sdk-state')
     Object.assign(inquiryState, sdk.state)
     testDataItems.value = sdk.testData
   } catch { /* SDK state なくても動く */ }
-  // 2. localStorage の保存分で上書き（ブラウザ実行で生成されたデータ優先）
-  const savedState = localStorage.getItem('egov_inquiry_state')
-  if (savedState) Object.assign(inquiryState, JSON.parse(savedState))
   preparedArriveId.value = localStorage.getItem('egov_prepared_arrive_id') ?? ''
   preparedNoticeSubId.value = localStorage.getItem('egov_prepared_notice_sub_id') ?? ''
   postArriveId.value = localStorage.getItem('egov_post_arrive_id') ?? ''
@@ -969,35 +969,52 @@ async function runInquiryTest(item: InquiryTestItem) {
         break
       }
       case '09-1': {
-        // 再提出: 07-2 の arrive_id を初回受付番号として再提出
-        const aid09 = inquiryState.arriveId_07_2 || inquiryState.arriveId_07_1
-        if (!aid09) throw new Error('07-1を先に実行してください')
+        // 再提出: 900A020700013000 で申請 → 補正待ちなら再提出
         const procId09 = '900A020700013000'
-        const sk09 = await apiFetch<{ results: { file_data: string; configuration_file_name: string[]; file_info: Array<{ form_id: string; form_version: number; form_name: string; apply_file_name: string }> } }>(`/procedure/${procId09}`)
-        const zipData09 = Uint8Array.from(atob(sk09.results.file_data), c => c.charCodeAt(0))
-        const zip09 = await JSZip.loadAsync(zipData09)
-        for (const cfn of sk09.results.configuration_file_name) {
+        // まず申請（submitOne で連署付き送信）
+        const proc09 = TEST_PROCEDURES.find(p => p.proc_id === procId09)
+        // SDK state から補正待ち案件の arrive_id を取得（新規申請はしない）
+        let aid09 = inquiryState.arriveId_09_base
+        if (!aid09) throw new Error('900A020700013000 の申請送信失敗')
+        // ステータス確認
+        const detail09 = await client.getApplication(aid09)
+        if (!detail09.results.status.includes('補正待ち')) {
+          r.status = 'skip'
+          r.error = `${aid09} status=${detail09.results.status}（補正待ちではない。sandbox遷移後に再実行）`
+          break
+        }
+        // 再提出用 ZIP
+        const sk09r = await apiFetch<{ results: { file_data: string; configuration_file_name: string[]; file_info: Array<{ form_id: string; form_version: number; form_name: string; apply_file_name: string }> } }>(`/procedure/${procId09}`)
+        const zipData09r = Uint8Array.from(atob(sk09r.results.file_data), c => c.charCodeAt(0))
+        const zip09r = await JSZip.loadAsync(zipData09r)
+        for (const cfn of sk09r.results.configuration_file_name) {
           const p = `${procId09}/${cfn}`
-          const f = zip09.file(p)
+          const f = zip09r.file(p)
           if (f) {
             let xml = await f.async('string')
             xml = xml.replace(/<初回受付番号\/>/g, `<初回受付番号>${aid09}</初回受付番号>`)
             xml = xml.replace(/<初回受付番号><\/初回受付番号>/g, `<初回受付番号>${aid09}</初回受付番号>`)
             xml = xml.replace(/<申請種別\/>/g, '<申請種別>再提出</申請種別>')
             xml = xml.replace(/<申請種別><\/申請種別>/g, '<申請種別>再提出</申請種別>')
-            zip09.file(p, xml)
+            zip09r.file(p, xml)
           }
         }
-        const base64_09 = await zip09.generateAsync({ type: 'base64' })
-        const res09 = await client.submitApplication({ proc_id: procId09, send_file: { file_name: `${procId09}.zip`, file_data: base64_09 } })
+        const base64_09r = await zip09r.generateAsync({ type: 'base64' })
+        const res09 = await client.submitApplication({ proc_id: procId09, send_file: { file_name: `${procId09}.zip`, file_data: base64_09r } })
         r.response = `arrive_id=${res09.results.arrive_id} (初回=${aid09})`
         break
       }
       case '10-1': {
-        // 補正データ送信: 07-1 の arrive_id で補正
-        const aid10 = inquiryState.arriveId_07_1
-        if (!aid10) throw new Error('07-1を先に実行してください')
+        // 補正: 09-1 と同じ arrive_id で補正送信
         const procId10 = '900A020700013000'
+        let aid10 = inquiryState.arriveId_09_base
+        if (!aid10) throw new Error('09-1を先に実行してください')
+        const detail10 = await client.getApplication(aid10)
+        if (!detail10.results.status.includes('補正待ち')) {
+          r.status = 'skip'
+          r.error = `${aid10} status=${detail10.results.status}（補正待ちではない。sandbox遷移後に再実行）`
+          break
+        }
         const sk10 = await apiFetch<{ results: { file_data: string; configuration_file_name: string[]; file_info: Array<{ form_id: string; form_version: number; form_name: string; apply_file_name: string }> } }>(`/procedure/${procId10}`)
         const zipData10 = Uint8Array.from(atob(sk10.results.file_data), c => c.charCodeAt(0))
         const zip10 = await JSZip.loadAsync(zipData10)
