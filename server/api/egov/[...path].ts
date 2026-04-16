@@ -12,8 +12,8 @@ export default defineEventHandler(async (event) => {
 
   const url = new URL(`${apiBase}/${path}`)
   for (const [k, v] of Object.entries(query)) {
-    if (typeof v === 'string') {
-      url.searchParams.set(k, v)
+    if (v !== undefined && v !== null) {
+      url.searchParams.set(k, String(v))
     }
   }
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 const BUILD_TIME = '20260415-0430'
+import { EgovApiError } from '@ippoan/egov-shinsei-sdk'
 import type { EgovClient } from '@ippoan/egov-shinsei-sdk'
 import JSZip from 'jszip'
 import { TEST_PROCEDURES, PROCS_WITH_DESTINATION, type TestProcedure } from '~/utils/finalTestProcedures'
@@ -680,6 +681,690 @@ function resetAll() {
 const standardProcs = TEST_PROCEDURES.filter(p => p.format === 'standard')
 const individualProcs = TEST_PROCEDURES.filter(p => p.format === 'individual')
 const doneCount = computed(() => [...results.value.values()].filter(r => r.status === 'done').length)
+
+// ============================================================
+// 照会テスト (13-1 〜 31-1)
+// ============================================================
+
+interface InquiryTestItem {
+  test_no: string
+  api_name: string
+  category: string
+  needsPreparedData?: boolean
+  needsGbizId?: boolean
+}
+
+const INQUIRY_TESTS: InquiryTestItem[] = [
+  { test_no: '01-1', api_name: 'ユーザー認可', category: '認証・認可' },
+  { test_no: '02-1', api_name: 'アクセストークン取得', category: '認証・認可' },
+  { test_no: '03-1', api_name: 'アクセストークン再取得', category: '認証・認可' },
+  { test_no: '04-1', api_name: 'アクセストークン検証', category: '認証・認可' },
+  { test_no: '04-2', api_name: 'アクセストークン検証（リフレッシュ）', category: '認証・認可' },
+  { test_no: '05-1', api_name: '手続選択', category: '申請書作成' },
+  { test_no: '06-1', api_name: 'プレ印字データ取得', category: '申請書作成' },
+  { test_no: '07-1', api_name: '申請データ送信（添付なし）', category: '申請書作成' },
+  { test_no: '07-2', api_name: '申請データ送信（添付あり）', category: '申請書作成' },
+  { test_no: '08-1', api_name: '申請データbulk送信（正常）', category: '申請書作成' },
+  { test_no: '08-2', api_name: '申請データbulk送信（エラー）', category: '申請書作成' },
+  { test_no: '09-1', api_name: '申請データ送信（再提出）', category: '申請書作成', needsPreparedData: true },
+  { test_no: '10-1', api_name: '補正データ送信', category: '申請書作成', needsPreparedData: true },
+  { test_no: '11-1', api_name: '取下げ依頼送信', category: '申請書作成' },
+  { test_no: '12-1', api_name: '形式チェック実行（正常）', category: '申請データチェック' },
+  { test_no: '12-2', api_name: '形式チェック実行（エラー）', category: '申請データチェック' },
+  { test_no: '13-1', api_name: '申請案件一覧取得（送信番号）', category: '申請案件取得' },
+  { test_no: '13-2', api_name: '申請案件一覧取得（期間指定）', category: '申請案件取得' },
+  { test_no: '14-1', api_name: '申請案件取得', category: '申請案件取得' },
+  { test_no: '15-1', api_name: 'エラーレポート取得（送信番号）', category: '申請案件取得' },
+  { test_no: '15-2', api_name: 'エラーレポート取得（期間指定）', category: '申請案件取得' },
+  { test_no: '16-1', api_name: '手続に関するご案内一覧取得', category: 'お知らせ' },
+  { test_no: '17-1', api_name: '手続に関するご案内取得', category: 'お知らせ' },
+  { test_no: '18-1', api_name: '申請案件に関する通知一覧取得', category: 'お知らせ' },
+  { test_no: '18-2', api_name: '申請案件に関する通知取得', category: 'お知らせ' },
+  { test_no: '19-1', api_name: '公文書取得', category: '公文書', needsPreparedData: true },
+  { test_no: '20-1', api_name: '公文書取得完了', category: '公文書', needsPreparedData: true },
+  { test_no: '21-1', api_name: '公文書署名検証要求', category: '公文書', needsPreparedData: true },
+  { test_no: '22-1', api_name: '国庫金電子納付取扱金融機関一覧取得', category: '電子納付' },
+  { test_no: '23-1', api_name: '電子納付情報一覧取得', category: '電子納付' },
+  { test_no: '24-1', api_name: '電子納付金融機関サイト表示', category: '電子納付' },
+  { test_no: '25-1', api_name: 'ログアウト', category: '認証・認可' },
+  { test_no: '26-1', api_name: 'アクセストークン検証（ログアウト後）', category: '認証・認可' },
+  { test_no: '27-1', api_name: '電子送達利用申込み', category: '電子送達' },
+  { test_no: '28-1', api_name: '電子送達状況確認', category: '電子送達' },
+  { test_no: '29-1', api_name: '電子送達一覧取得', category: '電子送達' },
+  { test_no: '30-1', api_name: '電子送達取得', category: '電子送達' },
+  { test_no: '31-1', api_name: '電子送達取得完了', category: '電子送達' },
+  { test_no: '32-1', api_name: '情報共有設定', category: 'アカウント間情報共有', needsGbizId: true },
+  { test_no: '33-1', api_name: '情報共有更新', category: 'アカウント間情報共有', needsGbizId: true },
+  { test_no: '34-1', api_name: '情報共有解除', category: 'アカウント間情報共有', needsGbizId: true },
+  { test_no: '35-1', api_name: '情報共有確認', category: 'アカウント間情報共有', needsGbizId: true },
+  { test_no: '36-1', api_name: '情報共有一覧取得', category: 'アカウント間情報共有', needsGbizId: true },
+]
+
+interface InquiryResult {
+  test_no: string
+  status: 'pending' | 'running' | 'pass' | 'error' | 'skip'
+  response?: string
+  error?: string
+  durationMs?: number
+}
+
+const inquiryResults = ref<Map<string, InquiryResult>>(new Map())
+const inquiryRunning = ref(false)
+const inquiryProgress = ref(0)
+
+// 照会テスト用の中間データ
+const inquiryState = reactive<Record<string, string>>({})
+
+// localStorage から復元
+onMounted(() => {
+  const saved = localStorage.getItem('egov_inquiry_results')
+  if (saved) {
+    const arr: InquiryResult[] = JSON.parse(saved)
+    arr.forEach(r => inquiryResults.value.set(r.test_no, r))
+  }
+  const savedState = localStorage.getItem('egov_inquiry_state')
+  if (savedState) Object.assign(inquiryState, JSON.parse(savedState))
+  preparedArriveId.value = localStorage.getItem('egov_prepared_arrive_id') ?? ''
+  preparedNoticeSubId.value = localStorage.getItem('egov_prepared_notice_sub_id') ?? ''
+  postArriveId.value = localStorage.getItem('egov_post_arrive_id') ?? ''
+  postId.value = localStorage.getItem('egov_post_id') ?? ''
+  paymentArriveId.value = localStorage.getItem('egov_payment_arrive_id') ?? ''
+})
+
+function saveInquiryResults() {
+  localStorage.setItem('egov_inquiry_results', JSON.stringify([...inquiryResults.value.values()]))
+  localStorage.setItem('egov_inquiry_state', JSON.stringify(inquiryState))
+}
+
+function getInquiryResult(testNo: string): InquiryResult {
+  return inquiryResults.value.get(testNo) ?? { test_no: testNo, status: 'pending' }
+}
+
+// 公文書DL用の到達番号・通知通番入力
+const preparedArriveId = ref('')
+const preparedNoticeSubId = ref('')
+const postArriveId = ref('')
+const postId = ref('')
+const paymentArriveId = ref('')
+
+function savePreparedIds() {
+  localStorage.setItem('egov_prepared_arrive_id', preparedArriveId.value)
+  localStorage.setItem('egov_prepared_notice_sub_id', preparedNoticeSubId.value)
+  localStorage.setItem('egov_post_arrive_id', postArriveId.value)
+  localStorage.setItem('egov_post_id', postId.value)
+  localStorage.setItem('egov_payment_arrive_id', paymentArriveId.value)
+}
+
+const today = new Date().toISOString().slice(0, 10)
+
+async function runInquiryTest(item: InquiryTestItem) {
+  const r: InquiryResult = { test_no: item.test_no, status: 'running' }
+  inquiryResults.value.set(item.test_no, r)
+  const client = getClient()
+  const start = Date.now()
+
+  try {
+    switch (item.test_no) {
+      // 認証・認可 (01-1 〜 04-2): ログイン済みなら自動pass
+      case '01-1': {
+        if (!isAuthenticated.value) throw new Error('未ログイン')
+        r.response = 'ログイン済み（OAuth認可完了）'
+        break
+      }
+      case '02-1': {
+        if (!isAuthenticated.value) throw new Error('未ログイン')
+        r.response = 'トークン取得済み'
+        break
+      }
+      case '03-1': {
+        // まず composable で最新トークンを確保してからリフレッシュ
+        const auth03 = useEgovAuth()
+        // composable 経由でリフレッシュ（最新の refreshToken を使う）
+        await auth03.refreshAccessToken()
+        // リフレッシュ後の新トークンを localStorage から取得
+        const saved03 = JSON.parse(localStorage.getItem('egov_tokens') || '{}')
+        if (!saved03.accessToken) throw new Error('リフレッシュ失敗')
+        // もう1回リフレッシュして 03-1 のテスト結果とする
+        const tokenRes = await $fetch<{ access_token: string; refresh_token: string; expires_in: number }>('/api/egov/token', {
+          method: 'POST',
+          body: { grant_type: 'refresh_token', refresh_token: saved03.refreshToken },
+        })
+        // 新トークンを保存（04-1, 04-2 で使用）
+        inquiryState.newAccessToken = tokenRes.access_token
+        inquiryState.newRefreshToken = tokenRes.refresh_token
+        r.response = `新トークン取得成功 (expires_in=${tokenRes.expires_in})`
+        break
+      }
+      case '04-1': {
+        // 03-1 で取得した新アクセストークンを検証
+        const token04 = inquiryState.newAccessToken || useEgovAuth().accessToken.value
+        if (!token04) throw new Error('アクセストークンなし')
+        const res = await $fetch<{ active: boolean }>('/api/egov/introspect', {
+          method: 'POST',
+          body: { token: token04, token_type_hint: 'access_token' },
+        })
+        r.response = `active=${res.active}`
+        break
+      }
+      case '04-2': {
+        // 03-1 で取得した新リフレッシュトークンを検証
+        const rt04 = inquiryState.newRefreshToken || JSON.parse(localStorage.getItem('egov_tokens') || '{}').refreshToken
+        if (!rt04) throw new Error('リフレッシュトークンなし')
+        const res = await $fetch<{ active: boolean }>('/api/egov/introspect', {
+          method: 'POST',
+          body: { token: rt04, token_type_hint: 'refresh_token' },
+        })
+        r.response = `active=${res.active}`
+        break
+      }
+      // 申請書作成 (05-1 〜 12-2): 既存submitOneを活用
+      case '05-1': {
+        const proc = TEST_PROCEDURES.find(p => p.proc_id === '950A010700005000')
+        if (!proc) throw new Error('手続 950A010700005000 not found')
+        const skeleton = await apiFetch<{ results: { file_data: string } }>(`/procedure/${proc.proc_id}`)
+        r.response = `スケルトン取得成功 (${Math.round(skeleton.results.file_data.length / 1024)}KB)`
+        break
+      }
+      case '06-1': {
+        // まずスケルトン取得 → 申請書XMLをBase64で渡す
+        const preprintProcId = '900A102800072000'
+        const skeleton = await apiFetch<{ results: { file_data: string; file_info: Array<{ form_id: string; form_version: number; apply_file_name: string }> } }>(`/procedure/${preprintProcId}`)
+        const fi = skeleton.results.file_info[0]!
+        const zipData = Uint8Array.from(atob(skeleton.results.file_data), c => c.charCodeAt(0))
+        const zip = await JSZip.loadAsync(zipData)
+        const applyFile = zip.file(`${preprintProcId}/${fi.apply_file_name}`)
+        const applyXml = applyFile ? await applyFile.async('base64') : ''
+        const res = await client.getPreprint({
+          proc_id: preprintProcId,
+          form_id: fi.form_id,
+          form_version: fi.form_version,
+          file_data: applyXml,
+          application_info: [
+            { label: '労働保険番号', value: '12345678901234' },
+            { label: 'アクセスコード', value: '0000000000' },
+          ],
+        })
+        r.response = 'プレ印字取得成功'
+        break
+      }
+      case '07-1': {
+        // 申請データ送信（添付なし）— 既存 submitOne を利用
+        const proc071 = TEST_PROCEDURES.find(p => p.proc_id === '950A010700005000')
+        if (!proc071) throw new Error('手続 950A010700005000 not found')
+        await submitOne(proc071)
+        const res071 = results.value.get(proc071.proc_id)
+        if (res071?.status === 'done') {
+          inquiryState.arriveId_07_1 = res071.arrive_id!
+          r.response = `arrive_id=${res071.arrive_id}`
+        } else {
+          throw new Error(res071?.error ?? '申請送信失敗')
+        }
+        break
+      }
+      case '07-2': {
+        // 申請データ送信（添付あり）
+        const proc072 = TEST_PROCEDURES.find(p => p.proc_id === '950A010700006000')
+        if (!proc072) throw new Error('手続 950A010700006000 not found')
+        await submitOne(proc072)
+        const res072 = results.value.get(proc072.proc_id)
+        if (res072?.status === 'done') {
+          inquiryState.arriveId_07_2 = res072.arrive_id!
+          r.response = `arrive_id=${res072.arrive_id}`
+        } else {
+          throw new Error(res072?.error ?? '申請送信失敗')
+        }
+        break
+      }
+      case '08-1': {
+        // bulk送信（正常）— 2件分のZIPをまとめて送信
+        const proc081 = TEST_PROCEDURES.find(p => p.proc_id === '950A010700005000')
+        if (!proc081) throw new Error('手続 not found')
+        const skeleton081 = await apiFetch<{ results: { file_data: string; configuration_file_name: string[]; file_info: Array<{ form_id: string; form_version: number; form_name: string; apply_file_name: string }> } }>(`/procedure/${proc081.proc_id}`)
+        // ZIP構築（簡易版 — Trial送信）
+        const zipData081 = Uint8Array.from(atob(skeleton081.results.file_data), c => c.charCodeAt(0))
+        const zip081 = await JSZip.loadAsync(zipData081)
+        const bulkBase64 = await zip081.generateAsync({ type: 'base64' })
+        const bulkRes = await $fetch<{ results: { send_number: string } }>('/api/egov/bulk-apply', {
+          method: 'POST',
+          body: { send_file: { file_name: 'bulk.zip', file_data: bulkBase64 } },
+          headers: { Authorization: `Bearer ${useEgovAuth().accessToken.value}`, 'X-eGovAPI-Trial': 'true' },
+        })
+        inquiryState.sendNumber_08_1 = bulkRes.results.send_number
+        r.response = `send_number=${bulkRes.results.send_number}`
+        break
+      }
+      case '08-2': {
+        // bulk送信（エラーあり）— 不正な手続名
+        const proc082 = TEST_PROCEDURES.find(p => p.proc_id === '950A010700005000')
+        if (!proc082) throw new Error('手続 not found')
+        const skeleton082 = await apiFetch<{ results: { file_data: string; configuration_file_name: string[]; file_info: Array<{ form_id: string; form_version: number; form_name: string; apply_file_name: string }> } }>(`/procedure/${proc082.proc_id}`)
+        const zipData082 = Uint8Array.from(atob(skeleton082.results.file_data), c => c.charCodeAt(0))
+        const zip082 = await JSZip.loadAsync(zipData082)
+        // 不正な手続名を設定
+        for (const cfn of skeleton082.results.configuration_file_name) {
+          const p = `${proc082.proc_id}/${cfn}`
+          const f = zip082.file(p)
+          if (f) {
+            let xml = await f.async('string')
+            xml = xml.replace(/<手続名称\/>/g, '<手続名称>偽テスト用手続０００１</手続名称>')
+            xml = xml.replace(/<手続名称><\/手続名称>/g, '<手続名称>偽テスト用手続０００１</手続名称>')
+            zip082.file(p, xml)
+          }
+        }
+        const bulkBase64_082 = await zip082.generateAsync({ type: 'base64' })
+        const bulkRes082 = await $fetch<{ results: { send_number: string } }>('/api/egov/bulk-apply', {
+          method: 'POST',
+          body: { send_file: { file_name: 'bulk-error.zip', file_data: bulkBase64_082 } },
+          headers: { Authorization: `Bearer ${useEgovAuth().accessToken.value}`, 'X-eGovAPI-Trial': 'true' },
+        })
+        inquiryState.sendNumber_08_2 = bulkRes082.results.send_number
+        r.response = `send_number=${bulkRes082.results.send_number}`
+        break
+      }
+      case '09-1': {
+        if (!preparedArriveId.value) { r.status = 'skip'; r.error = '再提出用の到達番号を入力してください（テストデータ設定）'; break }
+        r.status = 'skip'
+        r.error = '再試験期間(04/20〜)に実行'
+        break
+      }
+      case '10-1': {
+        if (!preparedArriveId.value) { r.status = 'skip'; r.error = '補正用の到達番号を入力してください（テストデータ設定）'; break }
+        r.status = 'skip'
+        r.error = '再試験期間(04/20〜)に実行'
+        break
+      }
+      case '11-1': {
+        // 取下げ依頼 — 07-1 の到達番号を使用
+        const aid111 = inquiryState.arriveId_07_1
+        if (!aid111) throw new Error('07-1を先に実行してください')
+        const proc111 = TEST_PROCEDURES.find(p => p.proc_id === '950A010700005000')!
+        await submitOne(proc111) // 取下げ用に新しい申請を送信
+        const newAid = results.value.get(proc111.proc_id)?.arrive_id
+        if (!newAid) throw new Error('取下げ対象の申請送信失敗')
+        // 取下げ依頼はSDK経由
+        const skRes = await apiFetch<{ results: { file_data: string; configuration_file_name: string[]; file_info: Array<{ form_id: string; form_version: number; form_name: string; apply_file_name: string }> } }>(`/procedure/${proc111.proc_id}`)
+        const zipData111 = Uint8Array.from(atob(skRes.results.file_data), c => c.charCodeAt(0))
+        const zip111 = await JSZip.loadAsync(zipData111)
+        const mainPath111 = `${proc111.proc_id}/kousei.xml`
+        let mainXml111 = await zip111.file(mainPath111)!.async('string')
+        mainXml111 = mainXml111.replace(/<手続ID\/>/g, `<手続ID>9990000000000003</手続ID>`)
+        mainXml111 = mainXml111.replace(/<手続ID><\/手続ID>/g, `<手続ID>9990000000000003</手続ID>`)
+        mainXml111 = mainXml111.replace(/<初回受付番号\/>/g, `<初回受付番号>${newAid}</初回受付番号>`)
+        mainXml111 = mainXml111.replace(/<初回受付番号><\/初回受付番号>/g, `<初回受付番号>${newAid}</初回受付番号>`)
+        mainXml111 = mainXml111.replace(/<申請種別\/>/g, '<申請種別>取下げ依頼</申請種別>')
+        mainXml111 = mainXml111.replace(/<申請種別><\/申請種別>/g, '<申請種別>取下げ依頼</申請種別>')
+        zip111.file(mainPath111, mainXml111)
+        const withdrawBase64 = await zip111.generateAsync({ type: 'base64' })
+        await client.withdrawApplication({
+          arrive_id: newAid,
+          send_file: { file_name: 'withdraw.zip', file_data: withdrawBase64 },
+        })
+        r.response = `取下げ成功 arrive_id=${newAid}`
+        break
+      }
+      case '12-1': {
+        // 形式チェック（正常）
+        const proc121 = TEST_PROCEDURES.find(p => p.proc_id === '950A010700005000')!
+        const sk121 = await apiFetch<{ results: { file_data: string; configuration_file_name: string[]; file_info: Array<{ form_id: string; form_version: number; form_name: string; apply_file_name: string }> } }>(`/procedure/${proc121.proc_id}`)
+        const zipData121 = Uint8Array.from(atob(sk121.results.file_data), c => c.charCodeAt(0))
+        const zip121 = await JSZip.loadAsync(zipData121)
+        const base64_121 = await zip121.generateAsync({ type: 'base64' })
+        const checkRes = await client.checkFormat({
+          proc_id: proc121.proc_id,
+          send_file: { file_name: 'check.zip', file_data: base64_121 },
+        })
+        r.response = JSON.stringify(checkRes.results).substring(0, 200)
+        break
+      }
+      case '12-2': {
+        // 形式チェック（エラーあり）— 不正な手続名
+        const proc122 = TEST_PROCEDURES.find(p => p.proc_id === '950A010700005000')!
+        const sk122 = await apiFetch<{ results: { file_data: string; configuration_file_name: string[]; file_info: Array<{ form_id: string; form_version: number; form_name: string; apply_file_name: string }> } }>(`/procedure/${proc122.proc_id}`)
+        const zipData122 = Uint8Array.from(atob(sk122.results.file_data), c => c.charCodeAt(0))
+        const zip122 = await JSZip.loadAsync(zipData122)
+        for (const cfn of sk122.results.configuration_file_name) {
+          const p = `${proc122.proc_id}/${cfn}`
+          const f = zip122.file(p)
+          if (f) {
+            let xml = await f.async('string')
+            xml = xml.replace(/<手続名称\/>/g, '<手続名称>偽テスト用手続０００１</手続名称>')
+            xml = xml.replace(/<手続名称><\/手続名称>/g, '<手続名称>偽テスト用手続０００１</手続名称>')
+            zip122.file(p, xml)
+          }
+        }
+        const base64_122 = await zip122.generateAsync({ type: 'base64' })
+        const checkRes122 = await client.checkFormat({
+          proc_id: proc122.proc_id,
+          send_file: { file_name: 'check-error.zip', file_data: base64_122 },
+        })
+        r.response = JSON.stringify(checkRes122.results).substring(0, 200)
+        break
+      }
+      case '13-1': {
+        const sn = inquiryState.sendNumber_08_1
+        if (!sn) throw new Error('08-1を先に実行してください')
+        const res = await client.listApplications({ send_number: sn })
+        r.response = `count=${res.resultset?.count ?? 'N/A'}, send_number=${sn}`
+        break
+      }
+      case '13-2': {
+        const res = await client.listApplications({ date_from: today, date_to: today, limit: 10, offset: 0 })
+        const list = (res.results as any)?.apply_list
+        if (list?.[0]?.arrive_id) inquiryState.arriveId = list[0].arrive_id
+        r.response = `count=${res.resultset?.count ?? 'N/A'}`
+        break
+      }
+      case '14-1': {
+        const arriveId = inquiryState.arriveId_07_1 || inquiryState.arriveId
+        if (!arriveId) throw new Error('07-1を先に実行してください')
+        const res = await client.getApplication(arriveId)
+        r.response = `status=${res.results.status}, notices=${res.results.notice_count}, docs=${res.results.doc_count}`
+        break
+      }
+      case '15-1': {
+        const sn15 = inquiryState.sendNumber_08_2
+        if (!sn15) throw new Error('08-2を先に実行してください')
+        const res = await client.getErrorReport({ send_number: sn15 })
+        r.response = `send_number=${sn15}, ${JSON.stringify(res.results).substring(0, 150)}`
+        break
+      }
+      case '15-2': {
+        const res = await client.getErrorReport({ date_from: today, date_to: today, limit: 10, offset: 0 })
+        r.response = JSON.stringify(res.results).substring(0, 200)
+        break
+      }
+      case '16-1': {
+        const res = await client.listMessages({ date_from: '2020-11-24', date_to: today, limit: 10, offset: 0 })
+        const list = (res.results as any)?.message_list
+        if (list?.[0]?.information_id) {
+          inquiryState.informationId = list[0].information_id
+        }
+        r.response = `count=${res.resultset?.count ?? 'N/A'}`
+        break
+      }
+      case '17-1': {
+        const infoId = inquiryState.informationId
+        if (!infoId) { r.status = 'skip'; r.error = '16-1のinformationIdなし'; break }
+        const res = await client.getMessage(infoId)
+        r.response = `title=${(res.results as any)?.message?.title ?? 'N/A'}`
+        break
+      }
+      case '18-1': {
+        const res = await client.listNotices({ date_from: '2020-11-24', date_to: today, limit: 10, offset: 0 })
+        const list = (res.results as any)?.notice_list
+        if (list?.[0]) {
+          inquiryState.noticeArriveId = list[0].arrive_id
+          inquiryState.noticeSubId = String(list[0].notice_sub_id)
+        }
+        r.response = `count=${res.resultset?.count ?? 'N/A'}`
+        break
+      }
+      case '18-2': {
+        const aid = inquiryState.noticeArriveId
+        const nsid = inquiryState.noticeSubId
+        if (!aid || !nsid) { r.status = 'skip'; r.error = '18-1の通知データなし'; break }
+        const res = await client.getNotice(aid, nsid)
+        r.response = `title=${(res.results as any)?.notice?.notice_title ?? 'N/A'}`
+        break
+      }
+      case '19-1': {
+        if (!preparedArriveId.value || !preparedNoticeSubId.value) throw new Error('公文書用の到達番号・通知通番を入力してください')
+        const res = await client.getOfficialDocument(preparedArriveId.value, preparedNoticeSubId.value)
+        inquiryState.officialDocFileData = res.results.file_data
+        r.response = `files=${res.results.file_name_list?.length ?? 0}`
+        break
+      }
+      case '20-1': {
+        if (!preparedArriveId.value || !preparedNoticeSubId.value) throw new Error('19-1のデータなし')
+        await client.completeOfficialDocument({ arrive_id: preparedArriveId.value, notice_sub_id: Number(preparedNoticeSubId.value) })
+        r.response = 'OK'
+        break
+      }
+      case '21-1': {
+        const fileData = inquiryState.officialDocFileData
+        if (!fileData) throw new Error('19-1のfile_dataなし')
+        const res = await client.verifyOfficialDocument({ file_name: 'official_doc.zip', file_data: fileData, sig_verification_xml_file_name: 'kousei.xml' })
+        r.response = JSON.stringify(res.results).substring(0, 200)
+        break
+      }
+      case '22-1': {
+        const res = await client.listPaymentBanks()
+        const banks = (res.results as any)?.bank_list
+        if (banks?.[0]?.bank_name) inquiryState.bankName = banks[0].bank_name
+        r.response = `banks=${banks?.length ?? 'N/A'}`
+        break
+      }
+      case '23-1': {
+        if (!paymentArriveId.value) throw new Error('納付用の到達番号を入力してください')
+        const res = await client.getPaymentInfo(paymentArriveId.value)
+        const pay = (res.results as any)
+        if (pay?.proc_id) inquiryState.paymentProcId = pay.proc_id
+        if (pay?.pay_number) inquiryState.paymentNumber = pay.pay_number
+        // 22-1 で取得した金融機関名を使う
+        if (!inquiryState.bankName) inquiryState.bankName = 'テスト銀行'
+        r.response = JSON.stringify(res.results).substring(0, 200)
+        break
+      }
+      case '24-1': {
+        if (!inquiryState.paymentProcId || !paymentArriveId.value || !inquiryState.paymentNumber) throw new Error('23-1のデータなし')
+        const res = await client.displayPaymentSite({ proc_id: inquiryState.paymentProcId, arrive_id: paymentArriveId.value, pay_number: inquiryState.paymentNumber, bank_name: inquiryState.bankName || '' })
+        r.response = JSON.stringify(res.results).substring(0, 200)
+        break
+      }
+      case '27-1': {
+        // 電子送達利用申込み — 既存 submitOne で送信
+        const proc27 = TEST_PROCEDURES.find(p => p.proc_id === '900A013800001000')
+        if (!proc27) throw new Error('電子送達手続 900A013800001000 not found')
+        await submitOne(proc27)
+        const res27 = results.value.get(proc27.proc_id)
+        if (res27?.status === 'done' && res27.arrive_id) {
+          postArriveId.value = res27.arrive_id
+          savePreparedIds()
+          r.response = `arrive_id=${res27.arrive_id}`
+        } else {
+          throw new Error(res27?.error ?? '電子送達申請失敗')
+        }
+        break
+      }
+      case '28-1': {
+        if (!postArriveId.value) throw new Error('27-1を先に実行してください')
+        const res = await client.getPostApplyStatus(postArriveId.value)
+        r.response = `status=${(res.results as any)?.status ?? 'N/A'}`
+        break
+      }
+      case '29-1': {
+        const res = await client.listPostDeliveries({ date_from: today, date_to: today, limit: 10, offset: 0 })
+        const list = (res.results as any)?.post_list
+        if (list?.[0]?.post_id) {
+          postId.value = list[0].post_id
+          savePreparedIds()
+        }
+        r.response = `count=${res.resultset?.count ?? 'N/A'}`
+        break
+      }
+      case '30-1': {
+        if (!postId.value) throw new Error('29-1のpost_idなし')
+        const res = await client.getPostDelivery(postId.value)
+        inquiryState.postDocFileData = (res.results as any)?.file_data
+        r.response = `files=${(res.results as any)?.file_name_list?.length ?? 0}`
+        break
+      }
+      case '31-1': {
+        if (!postId.value) throw new Error('30-1のpost_idなし')
+        await client.completePostDelivery({ post_id: postId.value })
+        r.response = 'OK'
+        break
+      }
+      case '25-1': {
+        const saved = JSON.parse(localStorage.getItem('egov_tokens') || '{}')
+        if (!saved.refreshToken) throw new Error('リフレッシュトークンなし')
+        await $fetch('/api/egov/logout', {
+          method: 'POST',
+          body: { refresh_token: saved.refreshToken },
+        })
+        r.response = '204 No Content'
+        break
+      }
+      case '26-1': {
+        const saved = JSON.parse(localStorage.getItem('egov_tokens') || '{}')
+        if (!saved.refreshToken) throw new Error('リフレッシュトークンなし')
+        try {
+          const res = await $fetch<{ active: boolean }>('/api/egov/introspect', {
+            method: 'POST',
+            body: { token: saved.refreshToken, token_type_hint: 'refresh_token' },
+          })
+          r.response = `active=${res.active}`
+        } catch (e: any) {
+          // ログアウト後はエラーになる場合あり（仕様通り）
+          r.response = `expected error: ${e.data?.error ?? e.message}`
+        }
+        break
+      }
+      case '32-1': {
+        if (!useGbizId.value) { r.status = 'skip'; r.error = 'gBizIDアカウント必須'; break }
+        const res = await client.createShareSetting({ gbiz_id: 'test@example.com', official_doc_permission: 'READ', post_doc_permission: 'READ' })
+        r.response = JSON.stringify(res.results).substring(0, 200)
+        break
+      }
+      case '33-1': {
+        if (!useGbizId.value) { r.status = 'skip'; r.error = 'gBizIDアカウント必須'; break }
+        const res = await client.updateShareSetting({ gbiz_id: 'test@example.com', official_doc_permission: 'DOWNLOAD', post_doc_permission: 'DOWNLOAD' })
+        r.response = JSON.stringify(res.results).substring(0, 200)
+        break
+      }
+      case '34-1': {
+        if (!useGbizId.value) { r.status = 'skip'; r.error = 'gBizIDアカウント必須'; break }
+        const res = await client.deleteShareSetting({ gbiz_id: 'test@example.com' })
+        r.response = JSON.stringify(res.results).substring(0, 200)
+        break
+      }
+      case '35-1': {
+        if (!useGbizId.value) { r.status = 'skip'; r.error = 'gBizIDアカウント必須'; break }
+        const res = await client.confirmShareSetting({ gbiz_id: 'test@example.com', share_acceptance: 'ACCEPT' })
+        r.response = JSON.stringify(res.results).substring(0, 200)
+        break
+      }
+      case '36-1': {
+        if (!useGbizId.value) { r.status = 'skip'; r.error = 'gBizIDアカウント必須'; break }
+        const res = await client.listShareSettings()
+        r.response = JSON.stringify(res.results).substring(0, 200)
+        break
+      }
+      default:
+        r.status = 'skip'
+        r.error = '未実装'
+    }
+    if (r.status === 'running') r.status = 'pass'
+  } catch (e: unknown) {
+    if (r.status === 'running') r.status = 'error'
+    if (e instanceof EgovApiError) {
+      r.error = JSON.stringify({ statusCode: e.statusCode, resultCode: e.resultCode, messages: e.errorMessages, report: e.reportList }, null, 2)
+    } else {
+      const err = e as { data?: { data?: Record<string, unknown> }; message?: string }
+      r.error = err.data?.data ? JSON.stringify(err.data.data, null, 2) : err.message || String(e)
+    }
+  }
+
+  r.durationMs = Date.now() - start
+  inquiryResults.value.set(item.test_no, { ...r })
+
+  // エラーログに記録
+  const entry: Record<string, unknown> = { test_no: item.test_no, api_name: item.api_name, status: r.status, durationMs: r.durationMs }
+  if (r.response) entry.response = r.response
+  if (r.error) try { entry.error = JSON.parse(r.error) } catch { entry.error = r.error }
+  errorLog.value = errorLog.value + JSON.stringify(entry, null, 2) + '\n---\n'
+
+  saveInquiryResults()
+}
+
+async function runAllInquiry() {
+  inquiryRunning.value = true
+  inquiryProgress.value = 0
+  const tests = INQUIRY_TESTS.filter(t => !t.needsGbizId && getInquiryResult(t.test_no).status !== 'pass')
+  for (let i = 0; i < tests.length; i++) {
+    await runInquiryTest(tests[i]!)
+    inquiryProgress.value = Math.round(((i + 1) / tests.length) * 100)
+    if (i < tests.length - 1) await new Promise(r => setTimeout(r, 1000))
+  }
+  inquiryRunning.value = false
+}
+
+function resetInquiry() {
+  if (!confirm('テスト結果をリセットしますか？')) return
+  inquiryResults.value.clear()
+  localStorage.removeItem('egov_inquiry_results')
+  inquiryProgress.value = 0
+  errorLog.value = ''
+  localStorage.removeItem('egov_error_log')
+}
+
+async function exportAllResults() {
+  const zip = new JSZip()
+
+  // 照会テスト結果CSV
+  const csvLines = ['test_no,api_name,status,response,durationMs,error']
+  for (const t of INQUIRY_TESTS) {
+    const r = getInquiryResult(t.test_no)
+    const esc = (s?: string) => s ? `"${s.replace(/"/g, '""').replace(/\n/g, ' ')}"` : ''
+    csvLines.push(`${t.test_no},${esc(t.api_name)},${r.status},${esc(r.response)},${r.durationMs ?? ''},${esc(r.error)}`)
+  }
+  zip.file('inquiry-results.csv', csvLines.join('\n'))
+
+  // 申請送信結果CSV
+  const applyLines = ['No,proc_id,format,arrive_id,send_number']
+  for (const proc of TEST_PROCEDURES) {
+    const r = getResult(proc.proc_id)
+    applyLines.push(`${proc.no},${proc.proc_id},${proc.format},${r.arrive_id ?? ''},${r.send_number ?? ''}`)
+  }
+  zip.file('apply-results.csv', applyLines.join('\n'))
+
+  // 公文書ZIP (19-1)
+  if (inquiryState.officialDocFileData) {
+    const binary = atob(inquiryState.officialDocFileData)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+    zip.file('official_document_19-1.zip', bytes)
+  }
+
+  // 電子送達ZIP (30-1)
+  if (inquiryState.postDocFileData) {
+    const binary = atob(inquiryState.postDocFileData)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+    zip.file('post_delivery_30-1.zip', bytes)
+  }
+
+  // エラーログ
+  if (errorLog.value) {
+    zip.file('error-log.txt', errorLog.value)
+  }
+
+  const blob = await zip.generateAsync({ type: 'blob' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `final-test-results_${new Date().toISOString().slice(0, 10)}.zip`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function exportInquiryCsv() {
+  const lines = ['test_no,api_name,status,response,durationMs,error']
+  for (const t of INQUIRY_TESTS) {
+    const r = getInquiryResult(t.test_no)
+    const esc = (s?: string) => s ? `"${s.replace(/"/g, '""').replace(/\n/g, ' ')}"` : ''
+    lines.push(`${t.test_no},${esc(t.api_name)},${r.status},${esc(r.response)},${r.durationMs ?? ''},${esc(r.error)}`)
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'inquiry-test-results.csv'
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+const inquiryDoneCount = computed(() => [...inquiryResults.value.values()].filter(r => r.status === 'pass').length)
 </script>
 
 <template>
@@ -821,98 +1506,89 @@ const doneCount = computed(() => [...results.value.values()].filter(r => r.statu
         <input v-model.number="delay" type="number" min="500" max="10000" step="500" style="width: 80px;" />
       </div>
 
-      <h2>標準形式 ({{ standardProcs.length }}件)</h2>
-      <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 13px;">
-        <thead>
-          <tr style="background: #f8f9fa;">
-            <th style="border: 1px solid #dee2e6; padding: 6px;">No</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">手続識別子</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">期待状態</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">備考</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">状態</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">到達番号</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">送信番号</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <template v-for="proc in standardProcs" :key="proc.proc_id">
-          <tr>
-            <td style="border: 1px solid #dee2e6; padding: 4px; text-align: center;">{{ proc.no }}</td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 12px;">{{ proc.proc_id }}</td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; font-size: 12px;">{{ proc.expected_state }}</td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; font-size: 12px;">{{ proc.note }}</td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; text-align: center;">
-              <span v-if="getResult(proc.proc_id).status === 'done'" style="color: #28a745;">完了</span>
-              <span v-else-if="getResult(proc.proc_id).status === 'error'" style="color: #dc3545;">エラー</span>
-              <span v-else-if="getResult(proc.proc_id).status === 'skeleton'" style="color: #ffc107;">取得中</span>
-              <span v-else-if="getResult(proc.proc_id).status === 'submitting'" style="color: #17a2b8;">送信中</span>
-              <span v-else style="color: #6c757d;">待機</span>
-            </td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 11px;">{{ getResult(proc.proc_id).arrive_id ?? '' }}</td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 11px;">{{ getResult(proc.proc_id).send_number ?? '' }}</td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; text-align: center;">
-              <button
-                @click="submitOne(proc, true)"
-                :disabled="running || getResult(proc.proc_id).status === 'done'"
-                style="padding: 2px 8px; font-size: 12px; cursor: pointer;"
-              >
-                実行
-              </button>
-            </td>
-          </tr>
-          <tr v-if="getResult(proc.proc_id).status === 'error'">
-            <td colspan="8" style="border: 1px solid #dee2e6; padding: 4px 8px; background: #fff5f5; color: #dc3545; font-size: 12px; word-break: break-all; white-space: pre-wrap; cursor: pointer;" @click="copyResult(proc)">
-              <span style="color: #999; font-size: 10px;">[{{ gitCommit }}]</span> {{ getResult(proc.proc_id).error }}
-            </td>
-          </tr>
-          </template>
-        </tbody>
-      </table>
+      <h2>全テスト項目 ({{ INQUIRY_TESTS.length }}件)</h2>
 
-      <h2>個別署名形式 ({{ individualProcs.length }}件)</h2>
+      <!-- 準備データ入力 -->
+      <div style="padding: 16px; background: #f0f4ff; border: 1px solid #b8c9ff; border-radius: 8px; margin: 20px 0;">
+        <h3 style="margin: 0 0 12px 0; font-size: 14px;">テストデータ設定</h3>
+        <div style="display: grid; grid-template-columns: 160px 1fr; gap: 6px 12px; align-items: center; font-size: 13px;">
+          <label>公文書 到達番号:</label>
+          <input v-model="preparedArriveId" @change="savePreparedIds" placeholder="19-1/20-1/21-1用" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px; font-family: monospace;" />
+          <label>公文書 通知通番:</label>
+          <input v-model="preparedNoticeSubId" @change="savePreparedIds" placeholder="19-1/20-1/21-1用" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px; font-family: monospace;" />
+          <label>納付 到達番号:</label>
+          <input v-model="paymentArriveId" @change="savePreparedIds" placeholder="23-1/24-1用" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px; font-family: monospace;" />
+          <label>電子送達 到達番号:</label>
+          <input v-model="postArriveId" @change="savePreparedIds" placeholder="28-1用" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px; font-family: monospace;" />
+          <label>電子送達 post_id:</label>
+          <input v-model="postId" @change="savePreparedIds" placeholder="30-1/31-1用" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px; font-family: monospace;" />
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; align-items: center;">
+        <button @click="runAllInquiry" :disabled="inquiryRunning" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
+          {{ inquiryRunning ? '実行中...' : '照会テスト全件実行' }}
+        </button>
+        <button @click="exportAllResults" style="padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
+          全結果ZIPダウンロード
+        </button>
+        <button @click="exportInquiryCsv" style="padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">
+          照会CSV出力
+        </button>
+        <button @click="resetInquiry" :disabled="inquiryRunning" style="padding: 10px 20px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">
+          照会リセット
+        </button>
+        <span style="margin-left: auto;">
+          完了: {{ inquiryDoneCount }} / {{ INQUIRY_TESTS.length }}
+        </span>
+      </div>
+
+      <div v-if="inquiryRunning" style="padding: 10px; background: #e9ecef; border-radius: 4px; margin-bottom: 20px;">
+        <div style="background: #dee2e6; border-radius: 4px; height: 8px; margin-bottom: 8px;">
+          <div :style="{ width: inquiryProgress + '%', background: '#28a745', height: '100%', borderRadius: '4px', transition: 'width 0.3s' }" />
+        </div>
+      </div>
+
       <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
         <thead>
           <tr style="background: #f8f9fa;">
             <th style="border: 1px solid #dee2e6; padding: 6px;">No</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">手続識別子</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">期待状態</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">備考</th>
+            <th style="border: 1px solid #dee2e6; padding: 6px;">カテゴリ</th>
+            <th style="border: 1px solid #dee2e6; padding: 6px;">API名</th>
             <th style="border: 1px solid #dee2e6; padding: 6px;">状態</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">到達番号</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">送信番号</th>
+            <th style="border: 1px solid #dee2e6; padding: 6px;">レスポンス</th>
+            <th style="border: 1px solid #dee2e6; padding: 6px;">ms</th>
             <th style="border: 1px solid #dee2e6; padding: 6px;">操作</th>
           </tr>
         </thead>
         <tbody>
-          <template v-for="proc in individualProcs" :key="proc.proc_id">
+          <template v-for="item in INQUIRY_TESTS" :key="item.test_no">
           <tr>
-            <td style="border: 1px solid #dee2e6; padding: 4px; text-align: center;">{{ proc.no }}</td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 12px;">{{ proc.proc_id }}</td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; font-size: 12px;">{{ proc.expected_state }}</td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; font-size: 12px;">{{ proc.note }}</td>
+            <td style="border: 1px solid #dee2e6; padding: 4px; text-align: center;">{{ item.test_no }}</td>
+            <td style="border: 1px solid #dee2e6; padding: 4px; font-size: 12px;">{{ item.category }}</td>
+            <td style="border: 1px solid #dee2e6; padding: 4px; font-size: 12px;">{{ item.api_name }}</td>
             <td style="border: 1px solid #dee2e6; padding: 4px; text-align: center;">
-              <span v-if="getResult(proc.proc_id).status === 'done'" style="color: #28a745;">完了</span>
-              <span v-else-if="getResult(proc.proc_id).status === 'error'" style="color: #dc3545;">エラー</span>
-              <span v-else-if="getResult(proc.proc_id).status === 'skeleton'" style="color: #ffc107;">取得中</span>
-              <span v-else-if="getResult(proc.proc_id).status === 'submitting'" style="color: #17a2b8;">送信中</span>
+              <span v-if="getInquiryResult(item.test_no).status === 'pass'" style="color: #28a745;">pass</span>
+              <span v-else-if="getInquiryResult(item.test_no).status === 'error'" style="color: #dc3545;">error</span>
+              <span v-else-if="getInquiryResult(item.test_no).status === 'skip'" style="color: #ffc107;">skip</span>
+              <span v-else-if="getInquiryResult(item.test_no).status === 'running'" style="color: #17a2b8;">実行中</span>
               <span v-else style="color: #6c757d;">待機</span>
             </td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 11px;">{{ getResult(proc.proc_id).arrive_id ?? '' }}</td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 11px;">{{ getResult(proc.proc_id).send_number ?? '' }}</td>
+            <td style="border: 1px solid #dee2e6; padding: 4px; font-size: 11px; font-family: monospace; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ getInquiryResult(item.test_no).response ?? '' }}</td>
+            <td style="border: 1px solid #dee2e6; padding: 4px; text-align: right; font-size: 11px;">{{ getInquiryResult(item.test_no).durationMs ?? '' }}</td>
             <td style="border: 1px solid #dee2e6; padding: 4px; text-align: center;">
               <button
-                @click="submitOne(proc, true)"
-                :disabled="running || getResult(proc.proc_id).status === 'done'"
+                @click="runInquiryTest(item)"
+                :disabled="inquiryRunning || getInquiryResult(item.test_no).status === 'pass'"
                 style="padding: 2px 8px; font-size: 12px; cursor: pointer;"
               >
                 実行
               </button>
             </td>
           </tr>
-          <tr v-if="getResult(proc.proc_id).status === 'error'">
-            <td colspan="8" style="border: 1px solid #dee2e6; padding: 4px 8px; background: #fff5f5; color: #dc3545; font-size: 12px; word-break: break-all; white-space: pre-wrap; cursor: pointer;" @click="copyResult(proc)">
-              <span style="color: #999; font-size: 10px;">[{{ gitCommit }}]</span> {{ getResult(proc.proc_id).error }}
+          <tr v-if="getInquiryResult(item.test_no).status === 'error'">
+            <td colspan="7" style="border: 1px solid #dee2e6; padding: 4px 8px; background: #fff5f5; color: #dc3545; font-size: 12px; word-break: break-all; white-space: pre-wrap;">
+              {{ getInquiryResult(item.test_no).error }}
             </td>
           </tr>
           </template>
