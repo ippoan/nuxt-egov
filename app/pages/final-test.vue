@@ -753,15 +753,30 @@ const inquiryRunning = ref(false)
 const inquiryProgress = ref(0)
 
 // 照会テスト用の中間データ
+// 優先順位: ブラウザ実行中に生成 > localStorage 保存分 > SDK テスト結果
 const inquiryState = reactive<Record<string, string>>({})
+// 最終確認試験用データ情報 (手続→テストデータマッピング)
+const testDataItems = ref<Array<{ proc_id: string; data_state: string; remarks: string; format: string }>>([])
+
+/** テストデータから条件に合う手続IDを探す */
+function findTestProc(condition: string): string | undefined {
+  return testDataItems.value.find(t => t.data_state.includes(condition))?.proc_id
+}
 
 // localStorage から復元
-onMounted(() => {
+onMounted(async () => {
   const saved = localStorage.getItem('egov_inquiry_results')
   if (saved) {
     const arr: InquiryResult[] = JSON.parse(saved)
     arr.forEach(r => inquiryResults.value.set(r.test_no, r))
   }
+  // 1. SDK テスト結果 + テストデータ情報をロード
+  try {
+    const sdk = await $fetch<{ state: Record<string, string>; testData: any[] }>('/api/sdk-state')
+    Object.assign(inquiryState, sdk.state)
+    testDataItems.value = sdk.testData
+  } catch { /* SDK state なくても動く */ }
+  // 2. localStorage の保存分で上書き（ブラウザ実行で生成されたデータ優先）
   const savedState = localStorage.getItem('egov_inquiry_state')
   if (savedState) Object.assign(inquiryState, JSON.parse(savedState))
   preparedArriveId.value = localStorage.getItem('egov_prepared_arrive_id') ?? ''
@@ -817,22 +832,14 @@ async function runInquiryTest(item: InquiryTestItem) {
         break
       }
       case '03-1': {
-        // まず composable で最新トークンを確保してからリフレッシュ
-        const auth03 = useEgovAuth()
-        // composable 経由でリフレッシュ（最新の refreshToken を使う）
-        await auth03.refreshAccessToken()
-        // リフレッシュ後の新トークンを localStorage から取得
+        // composable 経由でリフレッシュ（最新の refreshToken を使う、1回で済ませる）
+        await useEgovAuth().refreshAccessToken()
+        // リフレッシュ後の新トークンを保存（04-1, 04-2 で使用）
         const saved03 = JSON.parse(localStorage.getItem('egov_tokens') || '{}')
-        if (!saved03.accessToken) throw new Error('リフレッシュ失敗')
-        // もう1回リフレッシュして 03-1 のテスト結果とする
-        const tokenRes = await $fetch<{ access_token: string; refresh_token: string; expires_in: number }>('/api/egov/token', {
-          method: 'POST',
-          body: { grant_type: 'refresh_token', refresh_token: saved03.refreshToken },
-        })
-        // 新トークンを保存（04-1, 04-2 で使用）
-        inquiryState.newAccessToken = tokenRes.access_token
-        inquiryState.newRefreshToken = tokenRes.refresh_token
-        r.response = `新トークン取得成功 (expires_in=${tokenRes.expires_in})`
+        if (!saved03.accessToken) throw new Error('リフレッシュ失敗。再ログインしてください。')
+        inquiryState.newAccessToken = saved03.accessToken
+        inquiryState.newRefreshToken = saved03.refreshToken
+        r.response = `新トークン取得成功`
         break
       }
       case '04-1': {
@@ -927,7 +934,7 @@ async function runInquiryTest(item: InquiryTestItem) {
         const bulkRes = await $fetch<{ results: { send_number: string } }>('/api/egov/bulk-apply', {
           method: 'POST',
           body: { send_file: { file_name: 'bulk.zip', file_data: bulkBase64 } },
-          headers: { Authorization: `Bearer ${useEgovAuth().accessToken.value}`, 'X-eGovAPI-Trial': 'true' },
+          headers: { Authorization: `Bearer ${useEgovAuth().accessToken.value}` },
         })
         inquiryState.sendNumber_08_1 = bulkRes.results.send_number
         r.response = `send_number=${bulkRes.results.send_number}`
@@ -955,51 +962,112 @@ async function runInquiryTest(item: InquiryTestItem) {
         const bulkRes082 = await $fetch<{ results: { send_number: string } }>('/api/egov/bulk-apply', {
           method: 'POST',
           body: { send_file: { file_name: 'bulk-error.zip', file_data: bulkBase64_082 } },
-          headers: { Authorization: `Bearer ${useEgovAuth().accessToken.value}`, 'X-eGovAPI-Trial': 'true' },
+          headers: { Authorization: `Bearer ${useEgovAuth().accessToken.value}` },
         })
         inquiryState.sendNumber_08_2 = bulkRes082.results.send_number
         r.response = `send_number=${bulkRes082.results.send_number}`
         break
       }
       case '09-1': {
-        if (!preparedArriveId.value) { r.status = 'skip'; r.error = '再提出用の到達番号を入力してください（テストデータ設定）'; break }
-        r.status = 'skip'
-        r.error = '再試験期間(04/20〜)に実行'
+        // 再提出: 07-1 の arrive_id を初回受付番号として再提出
+        const aid09 = inquiryState.arriveId_07_1
+        if (!aid09) throw new Error('07-1を先に実行してください')
+        const procId09 = '900A020700013000'
+        const sk09 = await apiFetch<{ results: { file_data: string; configuration_file_name: string[]; file_info: Array<{ form_id: string; form_version: number; form_name: string; apply_file_name: string }> } }>(`/procedure/${procId09}`)
+        const zipData09 = Uint8Array.from(atob(sk09.results.file_data), c => c.charCodeAt(0))
+        const zip09 = await JSZip.loadAsync(zipData09)
+        for (const cfn of sk09.results.configuration_file_name) {
+          const p = `${procId09}/${cfn}`
+          const f = zip09.file(p)
+          if (f) {
+            let xml = await f.async('string')
+            xml = xml.replace(/<初回受付番号\/>/g, `<初回受付番号>${aid09}</初回受付番号>`)
+            xml = xml.replace(/<初回受付番号><\/初回受付番号>/g, `<初回受付番号>${aid09}</初回受付番号>`)
+            xml = xml.replace(/<申請種別\/>/g, '<申請種別>再提出</申請種別>')
+            xml = xml.replace(/<申請種別><\/申請種別>/g, '<申請種別>再提出</申請種別>')
+            zip09.file(p, xml)
+          }
+        }
+        const base64_09 = await zip09.generateAsync({ type: 'base64' })
+        const res09 = await client.submitApplication({ proc_id: procId09, send_file: { file_name: `${procId09}.zip`, file_data: base64_09 } })
+        r.response = `arrive_id=${res09.results.arrive_id} (初回=${aid09})`
         break
       }
       case '10-1': {
-        if (!preparedArriveId.value) { r.status = 'skip'; r.error = '補正用の到達番号を入力してください（テストデータ設定）'; break }
-        r.status = 'skip'
-        r.error = '再試験期間(04/20〜)に実行'
+        // 補正データ送信: 07-1 の arrive_id で補正
+        const aid10 = inquiryState.arriveId_07_1
+        if (!aid10) throw new Error('07-1を先に実行してください')
+        const procId10 = '900A020700013000'
+        const sk10 = await apiFetch<{ results: { file_data: string; configuration_file_name: string[]; file_info: Array<{ form_id: string; form_version: number; form_name: string; apply_file_name: string }> } }>(`/procedure/${procId10}`)
+        const zipData10 = Uint8Array.from(atob(sk10.results.file_data), c => c.charCodeAt(0))
+        const zip10 = await JSZip.loadAsync(zipData10)
+        for (const cfn of sk10.results.configuration_file_name) {
+          const p = `${procId10}/${cfn}`
+          const f = zip10.file(p)
+          if (f) {
+            let xml = await f.async('string')
+            xml = xml.replace(/<申請種別\/>/g, '<申請種別>補正</申請種別>')
+            xml = xml.replace(/<申請種別><\/申請種別>/g, '<申請種別>補正</申請種別>')
+            zip10.file(p, xml)
+          }
+        }
+        const base64_10 = await zip10.generateAsync({ type: 'base64' })
+        const res10 = await client.amendApplication({ arrive_id: aid10, send_file: { file_name: `${procId10}.zip`, file_data: base64_10 } })
+        r.response = `arrive_id=${res10.results.arrive_id}`
         break
       }
       case '11-1': {
-        // 取下げ依頼 — 07-1 の到達番号を使用
+        // 取下げ依頼 — 07-1 の到達番号を使用（SDK と同じ）
         const aid111 = inquiryState.arriveId_07_1
         if (!aid111) throw new Error('07-1を先に実行してください')
         const proc111 = TEST_PROCEDURES.find(p => p.proc_id === '950A010700005000')!
-        await submitOne(proc111) // 取下げ用に新しい申請を送信
-        const newAid = results.value.get(proc111.proc_id)?.arrive_id
-        if (!newAid) throw new Error('取下げ対象の申請送信失敗')
-        // 取下げ依頼はSDK経由
-        const skRes = await apiFetch<{ results: { file_data: string; configuration_file_name: string[]; file_info: Array<{ form_id: string; form_version: number; form_name: string; apply_file_name: string }> } }>(`/procedure/${proc111.proc_id}`)
-        const zipData111 = Uint8Array.from(atob(skRes.results.file_data), c => c.charCodeAt(0))
+        // スケルトン取得
+        const skRes111 = await apiFetch<{ results: { file_data: string; configuration_file_name: string[]; file_info: Array<{ form_id: string; form_version: number; form_name: string; apply_file_name: string }> } }>(`/procedure/${proc111.proc_id}`)
+        const fi0_111 = skRes111.results.file_info[0]!
+        const baseName111 = fi0_111.form_name.replace(/＿[０-９\d]+$/, '')
+        const procName111 = `${baseName111}／${baseName111}`
+        const zipData111 = Uint8Array.from(atob(skRes111.results.file_data), c => c.charCodeAt(0))
         const zip111 = await JSZip.loadAsync(zipData111)
+        // kousei.xml を取下げ用に修正
         const mainPath111 = `${proc111.proc_id}/kousei.xml`
         let mainXml111 = await zip111.file(mainPath111)!.async('string')
-        mainXml111 = mainXml111.replace(/<手続ID\/>/g, `<手続ID>9990000000000003</手続ID>`)
-        mainXml111 = mainXml111.replace(/<手続ID><\/手続ID>/g, `<手続ID>9990000000000003</手続ID>`)
-        mainXml111 = mainXml111.replace(/<初回受付番号\/>/g, `<初回受付番号>${newAid}</初回受付番号>`)
-        mainXml111 = mainXml111.replace(/<初回受付番号><\/初回受付番号>/g, `<初回受付番号>${newAid}</初回受付番号>`)
+        // 様式IDを009に変更
+        mainXml111 = mainXml111.split('999000000000000001').join('999000000000000009')
+        mainXml111 = mainXml111.replace(/<手続ID\/>/g, '<手続ID>9990000000000003</手続ID>')
+        mainXml111 = mainXml111.replace(/<手続ID><\/手続ID>/g, '<手続ID>9990000000000003</手続ID>')
+        mainXml111 = mainXml111.replace(/<手続名称\/>/g, `<手続名称>${procName111}</手続名称>`)
+        mainXml111 = mainXml111.replace(/<手続名称><\/手続名称>/g, `<手続名称>${procName111}</手続名称>`)
+        mainXml111 = mainXml111.replace(/<初回受付番号\/>/g, `<初回受付番号>${aid111}</初回受付番号>`)
+        mainXml111 = mainXml111.replace(/<初回受付番号><\/初回受付番号>/g, `<初回受付番号>${aid111}</初回受付番号>`)
         mainXml111 = mainXml111.replace(/<申請種別\/>/g, '<申請種別>取下げ依頼</申請種別>')
         mainXml111 = mainXml111.replace(/<申請種別><\/申請種別>/g, '<申請種別>取下げ依頼</申請種別>')
+        // 添付書類属性情報を除去
+        mainXml111 = mainXml111.replace(/<添付書類属性情報>[\s\S]*?<\/添付書類属性情報>/g, '')
+        // 申請書属性情報（取下げ依頼用）
+        if (!mainXml111.includes('<申請書属性情報>')) {
+          mainXml111 = mainXml111.replace('</構成情報>',
+            '<申請書属性情報><申請書様式ID>999000000000000003</申請書様式ID><申請書様式バージョン>0001</申請書様式バージョン><申請書様式名称>取下げ依頼XML</申請書様式名称><申請書ファイル名称>torisageirai.xml</申請書ファイル名称></申請書属性情報></構成情報>')
+        }
         zip111.file(mainPath111, mainXml111)
+        // 取下げ依頼情報 XML
+        const now111 = new Date()
+        const withdrawXml = `<?xml version="1.0" encoding="UTF-8"?><?xml-stylesheet href="999000000000000003.xsl" type="text/xsl"?><DataRoot><様式ID>999000000000000003</様式ID><様式バージョン>0001</様式バージョン><STYLESHEET>999000000000000003.xsl</STYLESHEET><取下げ依頼情報><到達番号>${aid111}</到達番号><手続名称>${procName111}</手続名称><申請者氏名>テスト　太郎</申請者氏名><依頼年月日><年>${now111.getFullYear()}</年><月>${now111.getMonth() + 1}</月><日>${now111.getDate()}</日></依頼年月日><理由>テスト取下げ</理由></取下げ依頼情報></DataRoot>`
+        zip111.file(`${proc111.proc_id}/torisageirai.xml`, withdrawXml)
+        // 署名（useXmlSign composable 使用）
+        if (pfxLoaded.value) {
+          let signedMain111 = await zip111.file(mainPath111)!.async('string')
+          const torisageContent = await zip111.file(`${proc111.proc_id}/torisageirai.xml`)!.async('string')
+          const appFiles111 = new Map<string, string | Uint8Array>()
+          appFiles111.set('torisageirai.xml', torisageContent)
+          signedMain111 = signKouseiXml(signedMain111, appFiles111, 1)
+          zip111.file(mainPath111, signedMain111)
+        }
         const withdrawBase64 = await zip111.generateAsync({ type: 'base64' })
         await client.withdrawApplication({
-          arrive_id: newAid,
+          arrive_id: aid111,
           send_file: { file_name: 'withdraw.zip', file_data: withdrawBase64 },
         })
-        r.response = `取下げ成功 arrive_id=${newAid}`
+        r.response = `取下げ成功 arrive_id=${aid111}`
         break
       }
       case '12-1': {
@@ -1108,7 +1176,28 @@ async function runInquiryTest(item: InquiryTestItem) {
         break
       }
       case '19-1': {
-        if (!preparedArriveId.value || !preparedNoticeSubId.value) throw new Error('公文書用の到達番号・通知通番を入力してください')
+        // 公文書取得: テストデータ設定 > 申請済み案件から自動検索
+        let docArriveId = preparedArriveId.value || inquiryState.officialDocArriveId
+        let docNoticeSubId = preparedNoticeSubId.value || inquiryState.officialDocNoticeSubId
+        if (!docArriveId || !docNoticeSubId) {
+          // 申請一覧から公文書のある案件を検索
+          const list19 = await client.listApplications({ date_from: '2020-01-01', date_to: today, limit: 50, offset: 0 })
+          const apps19 = (list19.results as any)?.apply_list ?? []
+          for (const app of apps19) {
+            try {
+              const detail = await client.getApplication(app.arrive_id)
+              if (detail.results.official_list?.length) {
+                const doc = detail.results.official_list[0]!
+                docArriveId = detail.results.arrive_id
+                docNoticeSubId = String(doc.notice_sub_id)
+                inquiryState.officialDocArriveId = docArriveId
+                inquiryState.officialDocNoticeSubId = docNoticeSubId
+                break
+              }
+            } catch { continue }
+          }
+        }
+        if (!docArriveId || !docNoticeSubId) throw new Error('公文書のある案件がありません。sandbox で公文書発行後に再実行してください。')
         const res = await client.getOfficialDocument(preparedArriveId.value, preparedNoticeSubId.value)
         inquiryState.officialDocFileData = res.results.file_data
         r.response = `files=${res.results.file_name_list?.length ?? 0}`
@@ -1135,19 +1224,34 @@ async function runInquiryTest(item: InquiryTestItem) {
         break
       }
       case '23-1': {
-        if (!paymentArriveId.value) throw new Error('納付用の到達番号を入力してください')
-        const res = await client.getPaymentInfo(paymentArriveId.value)
+        // 納付手続 (950A010002018000) で申請 → 納付情報取得
+        const payProc = TEST_PROCEDURES.find(p => p.proc_id === '950A010002018000')
+        if (!payProc) throw new Error('手続 950A010002018000 not found')
+        // まだ申請してなければ submitOne で申請
+        if (!inquiryState.payArriveId) {
+          await submitOne(payProc)
+          const payResult = results.value.get(payProc.proc_id)
+          if (payResult?.status === 'done' && payResult.arrive_id) {
+            inquiryState.payArriveId = payResult.arrive_id
+          } else {
+            throw new Error('納付手続の申請送信失敗')
+          }
+        }
+        const res = await client.getPaymentInfo(inquiryState.payArriveId)
         const pay = (res.results as any)
         if (pay?.proc_id) inquiryState.paymentProcId = pay.proc_id
-        if (pay?.pay_number) inquiryState.paymentNumber = pay.pay_number
-        // 22-1 で取得した金融機関名を使う
+        if (pay?.apply_pay_list?.[0]?.pay_number) {
+          inquiryState.paymentNumber = pay.apply_pay_list[0].pay_number
+        }
         if (!inquiryState.bankName) inquiryState.bankName = 'テスト銀行'
         r.response = JSON.stringify(res.results).substring(0, 200)
         break
       }
       case '24-1': {
-        if (!inquiryState.paymentProcId || !paymentArriveId.value || !inquiryState.paymentNumber) throw new Error('23-1のデータなし')
-        const res = await client.displayPaymentSite({ proc_id: inquiryState.paymentProcId, arrive_id: paymentArriveId.value, pay_number: inquiryState.paymentNumber, bank_name: inquiryState.bankName || '' })
+        if (!inquiryState.paymentProcId || !inquiryState.paymentNumber) throw new Error('23-1のpay_numberなし')
+        const payAid24 = inquiryState.payArriveId
+        if (!payAid24) throw new Error('23-1のarriveIdなし')
+        const res = await client.displayPaymentSite({ proc_id: inquiryState.paymentProcId, arrive_id: payAid24, pay_number: inquiryState.paymentNumber, bank_name: inquiryState.bankName || 'テスト銀行' })
         r.response = JSON.stringify(res.results).substring(0, 200)
         break
       }
@@ -1173,25 +1277,26 @@ async function runInquiryTest(item: InquiryTestItem) {
         break
       }
       case '29-1': {
-        const res = await client.listPostDeliveries({ date_from: today, date_to: today, limit: 10, offset: 0 })
+        const res = await client.listPostDeliveries({ date_from: '2020-11-24', date_to: today, limit: 10, offset: 0 })
         const list = (res.results as any)?.post_list
         if (list?.[0]?.post_id) {
-          postId.value = list[0].post_id
-          savePreparedIds()
+          inquiryState.postId_29_1 = list[0].post_id
         }
         r.response = `count=${res.resultset?.count ?? 'N/A'}`
         break
       }
       case '30-1': {
-        if (!postId.value) throw new Error('29-1のpost_idなし')
-        const res = await client.getPostDelivery(postId.value)
+        const pid30 = inquiryState.postId_29_1
+        if (!pid30) throw new Error('29-1のpost_idなし')
+        const res = await client.getPostDelivery(pid30)
         inquiryState.postDocFileData = (res.results as any)?.file_data
         r.response = `files=${(res.results as any)?.file_name_list?.length ?? 0}`
         break
       }
       case '31-1': {
-        if (!postId.value) throw new Error('30-1のpost_idなし')
-        await client.completePostDelivery({ post_id: postId.value })
+        const pid31 = inquiryState.postId_29_1
+        if (!pid31) throw new Error('29-1のpost_idなし')
+        await client.completePostDelivery({ post_id: pid31 })
         r.response = 'OK'
         break
       }
