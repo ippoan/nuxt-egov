@@ -104,10 +104,12 @@ export function useEgovAuth() {
     if (import.meta.client) {
       (window as any)._egovToken = data.access_token
       // localStorage に永続化（リロード時に復元）
+      const prev = JSON.parse(localStorage.getItem('egov_tokens') || '{}')
       localStorage.setItem('egov_tokens', JSON.stringify({
         accessToken: data.access_token,
         refreshToken: data.refresh_token,
         expiresAt: tokenExpiresAt.value,
+        loginAt: prev.loginAt ?? Date.now(),
       }))
     }
   }
