@@ -669,6 +669,26 @@ function exportCsv() {
   URL.revokeObjectURL(url)
 }
 
+// Excel 貼付用: 各セルにシングルクォート prefix を付けて文字列扱いにし、精度落ちを防ぐ
+// TSV (タブ区切り) で 送信番号\t到達番号 の順 (エクセル最終確認試験用データ情報のデータ1 列順)
+async function copyStandardForExcel() {
+  const lines: string[] = []
+  for (const proc of standardProcs) {
+    const r = getResult(proc.proc_id)
+    const send = r.send_number ?? ''
+    const arrive = r.arrive_id ?? ''
+    lines.push(`'${send}\t'${arrive}`)
+  }
+  const text = lines.join('\n')
+  try {
+    await navigator.clipboard.writeText(text)
+    currentProc.value = `標準形式 ${standardProcs.length}件を TSV でコピー (送信番号\\t到達番号、'prefix付)`
+  }
+  catch (e) {
+    alert('クリップボードコピーに失敗しました: ' + (e instanceof Error ? e.message : e))
+  }
+}
+
 function resetAll() {
   if (!confirm('全結果をリセットしますか？')) return
   results.value.clear()
@@ -821,7 +841,16 @@ const doneCount = computed(() => [...results.value.values()].filter(r => r.statu
         <input v-model.number="delay" type="number" min="500" max="10000" step="500" style="width: 80px;" />
       </div>
 
-      <h2>標準形式 ({{ standardProcs.length }}件)</h2>
+      <div style="display: flex; align-items: center; gap: 12px; margin-top: 20px;">
+        <h2 style="margin: 0;">標準形式 ({{ standardProcs.length }}件)</h2>
+        <button
+          @click="copyStandardForExcel"
+          style="padding: 4px 12px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;"
+          title="送信番号\t到達番号 の TSV をクリップボードにコピー (Excel にそのまま貼付可)"
+        >
+          Excel貼付用コピー (送信→到達)
+        </button>
+      </div>
       <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 13px;">
         <thead>
           <tr style="background: #f8f9fa;">
@@ -830,8 +859,8 @@ const doneCount = computed(() => [...results.value.values()].filter(r => r.statu
             <th style="border: 1px solid #dee2e6; padding: 6px;">期待状態</th>
             <th style="border: 1px solid #dee2e6; padding: 6px;">備考</th>
             <th style="border: 1px solid #dee2e6; padding: 6px;">状態</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">到達番号</th>
             <th style="border: 1px solid #dee2e6; padding: 6px;">送信番号</th>
+            <th style="border: 1px solid #dee2e6; padding: 6px;">到達番号</th>
             <th style="border: 1px solid #dee2e6; padding: 6px;">操作</th>
           </tr>
         </thead>
@@ -849,8 +878,8 @@ const doneCount = computed(() => [...results.value.values()].filter(r => r.statu
               <span v-else-if="getResult(proc.proc_id).status === 'submitting'" style="color: #17a2b8;">送信中</span>
               <span v-else style="color: #6c757d;">待機</span>
             </td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 11px;">{{ getResult(proc.proc_id).arrive_id ?? '' }}</td>
             <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 11px;">{{ getResult(proc.proc_id).send_number ?? '' }}</td>
+            <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 11px;">{{ getResult(proc.proc_id).arrive_id ?? '' }}</td>
             <td style="border: 1px solid #dee2e6; padding: 4px; text-align: center;">
               <button
                 @click="submitOne(proc, true)"
@@ -879,8 +908,8 @@ const doneCount = computed(() => [...results.value.values()].filter(r => r.statu
             <th style="border: 1px solid #dee2e6; padding: 6px;">期待状態</th>
             <th style="border: 1px solid #dee2e6; padding: 6px;">備考</th>
             <th style="border: 1px solid #dee2e6; padding: 6px;">状態</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">到達番号</th>
             <th style="border: 1px solid #dee2e6; padding: 6px;">送信番号</th>
+            <th style="border: 1px solid #dee2e6; padding: 6px;">到達番号</th>
             <th style="border: 1px solid #dee2e6; padding: 6px;">操作</th>
           </tr>
         </thead>
@@ -898,8 +927,8 @@ const doneCount = computed(() => [...results.value.values()].filter(r => r.statu
               <span v-else-if="getResult(proc.proc_id).status === 'submitting'" style="color: #17a2b8;">送信中</span>
               <span v-else style="color: #6c757d;">待機</span>
             </td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 11px;">{{ getResult(proc.proc_id).arrive_id ?? '' }}</td>
             <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 11px;">{{ getResult(proc.proc_id).send_number ?? '' }}</td>
+            <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 11px;">{{ getResult(proc.proc_id).arrive_id ?? '' }}</td>
             <td style="border: 1px solid #dee2e6; padding: 4px; text-align: center;">
               <button
                 @click="submitOne(proc, true)"
