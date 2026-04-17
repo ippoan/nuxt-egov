@@ -2,6 +2,7 @@
 const BUILD_TIME = '20260415-0430'
 import { EgovApiError } from '@ippoan/egov-shinsei-sdk'
 import type { EgovClient } from '@ippoan/egov-shinsei-sdk'
+import { EgovApiError } from '@ippoan/egov-shinsei-sdk'
 import JSZip from 'jszip'
 import { TEST_PROCEDURES, PROCS_WITH_DESTINATION, type TestProcedure } from '~/utils/finalTestProcedures'
 
@@ -258,9 +259,9 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
 
     if (proc.format === 'individual' && configFiles.length >= 3) {
       // 個別署名形式: 3つの構成情報XMLをそれぞれ異なるルールで処理
-      // configFiles[0] = "kousei.xml" (main)
-      // configFiles[1] = WriteAppli構成情報 (様式ID=001→009に変換)
-      // configFiles[2] = SignAttach構成情報 (様式ID=009→001に変換)
+      // configFiles[0] = "kousei.xml" (main, 様式ID=001)
+      // configFiles[1] = SignAttach構成情報 (スケルトン 様式ID=001のまま、添付書類署名)
+      // configFiles[2] = WriteAppli構成情報 (スケルトン 様式ID=009のまま、申請書作成)
 
       // --- configFiles[0]: メイン kousei.xml ---
       const mainPath = `${proc.proc_id}/${configFiles[0]}`
@@ -273,56 +274,25 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
           xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
           xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
         }
-        // 添付書類属性情報: 申請書XML + configFiles[1] + configFiles[2] を登録
+        // 添付書類属性情報: 4 件 (apply + config[1] + config[2] + dummy) — 仕様準拠
         if (fi0) {
           let attachBlocks = ''
-          // 申請書XML
           attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>${fi0.form_name}</添付書類名称><添付書類ファイル名称>${fi0.apply_file_name}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
-          // configFiles[1] (WriteAppli構成情報)
-          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>申請書作成構成情報</添付書類名称><添付書類ファイル名称>${configFiles[1]}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
-          // configFiles[2] (SignAttach構成情報)
-          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名構成情報</添付書類名称><添付書類ファイル名称>${configFiles[2]}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
-          // 添付書類署名ファイル（ダミー添付ファイル — SignAttach構成情報から参照される）
+          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名構成情報</添付書類名称><添付書類ファイル名称>${configFiles[1]}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
+          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>申請書作成構成情報</添付書類名称><添付書類ファイル名称>${configFiles[2]}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
           attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名ファイル１</添付書類名称><添付書類ファイル名称>dummy.txt</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
           xml = xml.replace('</管理情報>', '</管理情報>' + attachBlocks)
         }
-        // 申請書属性情報は入れない（個別署名形式）
+        // 申請書属性情報は入れない (個別形式 仕様 No.119)
         zip.file(mainPath, xml)
       }
 
-      // --- configFiles[1]: WriteAppli（申請書作成） ---
-      // スケルトンでは様式ID=001だが、APIは009を期待 → 001→009にスワップ
-      const writeAppliPath = `${proc.proc_id}/${configFiles[1]}`
-      const writeAppliFile = zip.file(writeAppliPath)
-      if (writeAppliFile) {
-        let xml = await writeAppliFile.async('string')
-        console.log(`[${proc.proc_id}] WriteAppli (before):`, xml.substring(0, 3000))
-        // 様式ID 001→009 にスワップ（xml-stylesheet PIを含む全箇所）
-        xml = xml.split('999000000000000001').join('999000000000000009')
-        // 最小限のフィールドのみ: 受付行政機関ID, 手続ID, 手続名称, 申請種別
-        const writeAppliValues: Record<string, string> = {
-          受付行政機関ID: '100' + proc.proc_id.substring(0, 3),
-          手続ID: proc.proc_id,
-          手続名称: proc.name,
-          申請種別: '申請書作成',
-        }
-        for (const [tag, value] of Object.entries(writeAppliValues)) {
-          xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
-          xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
-        }
-        // WriteAppli: 申請書属性情報・添付書類属性情報・提出先情報は入れない（スケルトンの空タグのまま残す）
-        zip.file(writeAppliPath, xml)
-      }
-
-      // --- configFiles[2]: SignAttach（添付書類署名） ---
-      // スケルトンでは様式ID=009だが、APIは001を期待 → 009→001にスワップ
-      const signAttachPath = `${proc.proc_id}/${configFiles[2]}`
+      // --- configFiles[1]: SignAttach（添付書類署名、様式ID=001のまま） ---
+      const signAttachPath = `${proc.proc_id}/${configFiles[1]}`
       const signAttachFile = zip.file(signAttachPath)
       if (signAttachFile) {
         let xml = await signAttachFile.async('string')
         console.log(`[${proc.proc_id}] SignAttach (before):`, xml.substring(0, 3000))
-        // 様式ID 009→001 にスワップ（xml-stylesheet PIを含む全箇所）
-        xml = xml.split('999000000000000009').join('999000000000000001')
         // 最小限のフィールドのみ: 受付行政機関ID, 手続ID, 手続名称, 申請種別
         const signAttachValues: Record<string, string> = {
           受付行政機関ID: '100' + proc.proc_id.substring(0, 3),
@@ -334,13 +304,40 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
           xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
           xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
         }
-        // 添付書類属性情報を挿入（仕様: 添付書類の場合は設定必須）
-        if (!xml.includes('<添付書類属性情報>')) {
-          const attachBlock = `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名ファイル１</添付書類名称><添付書類ファイル名称>dummy.txt</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
-          xml = xml.replace('</管理情報>', '</管理情報>' + attachBlock)
+        // 添付書類属性情報: apply + dummy (v6で確認: apply無しだと「添付必須」エラー) — 仕様 No.48
+        if (!xml.includes('<添付書類属性情報>') && fi0) {
+          let attachBlocks = ''
+          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>${fi0.form_name}</添付書類名称><添付書類ファイル名称>${fi0.apply_file_name}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
+          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名ファイル１</添付書類名称><添付書類ファイル名称>dummy.txt</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
+          xml = xml.replace('</管理情報>', '</管理情報>' + attachBlocks)
         }
-        // 個人情報・提出先情報は入れない
+        // 申請書属性情報は入れない（添付書類に対する署名の場合は省略）
         zip.file(signAttachPath, xml)
+      }
+
+      // --- configFiles[2]: WriteAppli（申請書作成、様式ID=009のまま） ---
+      const writeAppliPath = `${proc.proc_id}/${configFiles[2]}`
+      const writeAppliFile = zip.file(writeAppliPath)
+      if (writeAppliFile) {
+        let xml = await writeAppliFile.async('string')
+        console.log(`[${proc.proc_id}] WriteAppli (before):`, xml.substring(0, 3000))
+        // 最小限のフィールドのみ: 受付行政機関ID, 手続ID, 手続名称, 申請種別
+        const writeAppliValues: Record<string, string> = {
+          受付行政機関ID: '100' + proc.proc_id.substring(0, 3),
+          手続ID: proc.proc_id,
+          手続名称: proc.name,
+          申請種別: '申請書作成',
+        }
+        for (const [tag, value] of Object.entries(writeAppliValues)) {
+          xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
+          xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
+        }
+        // WriteAppli: 申請書属性情報 値あり (仕様 No.119 必須)
+        if (!xml.includes('<申請書属性情報>') && fi0) {
+          const shinseishoBlock = `<申請書属性情報><申請書様式ID>${fi0.form_id}</申請書様式ID><申請書様式バージョン>${String(fi0.form_version).padStart(4, '0')}</申請書様式バージョン><申請書様式名称>${fi0.form_name}</申請書様式名称><申請書ファイル名称>${fi0.apply_file_name}</申請書ファイル名称></申請書属性情報>`
+          xml = xml.replace('</構成情報>', shinseishoBlock + '</構成情報>')
+        }
+        zip.file(writeAppliPath, xml)
       }
       // ダミー添付ファイルをZIPに追加（添付書類署名対象）
       zip.file(`${proc.proc_id}/dummy.txt`, 'test')
@@ -472,41 +469,11 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
     // 署名を付与（署名ON + PFX読込済み + 手続が署名必要な場合のみ）
     if (enableSign.value && pfxLoaded.value && proc.signatureRequired) {
       if (proc.format === 'individual' && configFiles.length >= 3) {
-        // 個別署名形式: <署名情報> があるファイルのみ署名
+        // 個別署名形式: Main kousei.xml は署名不要（構成管理XMLに署名値が存在しない仕様）
+        // WriteAppli / SignAttach のみ署名
 
-        // --- Main kousei.xml: #構成情報 + 申請書ファイル参照 ---
-        const mainSignPath = `${proc.proc_id}/${configFiles[0]}`
-        const mainSignFile = zip.file(mainSignPath)
-        if (mainSignFile) {
-          let mainSignXml = await mainSignFile.async('string')
-          const appFiles = new Map<string, string | Uint8Array>()
-          for (const fi of skeleton.results.file_info) {
-            const appFile = zip.file(`${proc.proc_id}/${fi.apply_file_name}`)
-            if (appFile) appFiles.set(fi.apply_file_name, await appFile.async('string'))
-          }
-          currentProc.value = `${proc.no}. メイン署名付与中...`
-          mainSignXml = signKouseiXml(mainSignXml, appFiles, proc.signatureCount)
-          console.log(`[${proc.proc_id}] main kousei.xml (signed):`, mainSignXml.substring(0, 3000))
-          zip.file(mainSignPath, mainSignXml)
-        }
-
-        // --- WriteAppli: 申請書ファイルを参照して署名 ---
-        const waSignPath = `${proc.proc_id}/${configFiles[1]}`
-        const waSignFile = zip.file(waSignPath)
-        if (waSignFile && fi0) {
-          let waXml = await waSignFile.async('string')
-          const applyFile = zip.file(`${proc.proc_id}/${fi0.apply_file_name}`)
-          if (applyFile) {
-            const applyContent = await applyFile.async('string')
-            currentProc.value = `${proc.no}. WriteAppli署名付与中...`
-            waXml = signConfigXml(waXml, fi0.apply_file_name, applyContent)
-            console.log(`[${proc.proc_id}] WriteAppli (signed):`, waXml.substring(0, 3000))
-            zip.file(waSignPath, waXml)
-          }
-        }
-
-        // --- SignAttach: dummy.txt を参照して署名 ---
-        const saSignPath = `${proc.proc_id}/${configFiles[2]}`
+        // --- configFiles[1] = SignAttach: dummy.txt を参照して署名 ---
+        const saSignPath = `${proc.proc_id}/${configFiles[1]}`
         const saSignFile = zip.file(saSignPath)
         if (saSignFile) {
           let saXml = await saSignFile.async('string')
@@ -517,6 +484,21 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
             saXml = signConfigXml(saXml, 'dummy.txt', dummyContent)
             console.log(`[${proc.proc_id}] SignAttach (signed):`, saXml.substring(0, 3000))
             zip.file(saSignPath, saXml)
+          }
+        }
+
+        // --- configFiles[2] = WriteAppli: 申請書ファイルを参照して署名 ---
+        const waSignPath = `${proc.proc_id}/${configFiles[2]}`
+        const waSignFile = zip.file(waSignPath)
+        if (waSignFile && fi0) {
+          let waXml = await waSignFile.async('string')
+          const applyFile = zip.file(`${proc.proc_id}/${fi0.apply_file_name}`)
+          if (applyFile) {
+            const applyContent = await applyFile.async('string')
+            currentProc.value = `${proc.no}. WriteAppli署名付与中...`
+            waXml = signConfigXml(waXml, fi0.apply_file_name, applyContent)
+            console.log(`[${proc.proc_id}] WriteAppli (signed):`, waXml.substring(0, 3000))
+            zip.file(waSignPath, waXml)
           }
         }
       } else {
@@ -670,6 +652,26 @@ function exportCsv() {
   URL.revokeObjectURL(url)
 }
 
+// Excel 貼付用: 各セルにシングルクォート prefix を付けて文字列扱いにし、精度落ちを防ぐ
+// TSV (タブ区切り) で 送信番号\t到達番号 の順 (エクセル最終確認試験用データ情報のデータ1 列順)
+async function copyStandardForExcel() {
+  const lines: string[] = []
+  for (const proc of standardProcs) {
+    const r = getResult(proc.proc_id)
+    const send = r.send_number ?? ''
+    const arrive = r.arrive_id ?? ''
+    lines.push(`'${send}\t'${arrive}`)
+  }
+  const text = lines.join('\n')
+  try {
+    await navigator.clipboard.writeText(text)
+    currentProc.value = `標準形式 ${standardProcs.length}件を TSV でコピー (送信番号\\t到達番号、'prefix付)`
+  }
+  catch (e) {
+    alert('クリップボードコピーに失敗しました: ' + (e instanceof Error ? e.message : e))
+  }
+}
+
 function resetAll() {
   if (!confirm('全結果をリセットしますか？')) return
   results.value.clear()
@@ -681,6 +683,121 @@ function resetAll() {
 const standardProcs = TEST_PROCEDURES.filter(p => p.format === 'standard')
 const individualProcs = TEST_PROCEDURES.filter(p => p.format === 'individual')
 const doneCount = computed(() => [...results.value.values()].filter(r => r.status === 'done').length)
+
+// ============================================================
+// テストデータ準備 (TID_202604130039 spec/final_confirmation_test_data.json 出力)
+// ============================================================
+
+interface SpecSlot { 送信番号: string; 到達番号: string }
+interface SpecTestDataEntry {
+  format: 'standard' | 'individual'
+  proc_id: string
+  proc_name: string
+  data_state: string
+  status: string
+  remarks: string
+  slots: { '1': SpecSlot; '2': SpecSlot; '3': SpecSlot }
+  updatedAt: string | null
+}
+
+const TEST_PROCEDURE_MAP = new Map(TEST_PROCEDURES.map(p => [p.proc_id, p]))
+const specEntries = ref<SpecTestDataEntry[]>([])
+const specResultPath = ref('')
+const specRunning = ref(false)
+const specProgress = ref(0)
+const specCurrent = ref('')
+
+async function loadSpecData() {
+  const res = await $fetch<{ entries: SpecTestDataEntry[]; resultPath: string }>('/api/spec-test-data')
+  specEntries.value = res.entries
+  specResultPath.value = res.resultPath
+}
+
+async function postSpecUpdate(proc_id: string, slot: 1 | 2 | 3, patch: Partial<SpecSlot>) {
+  await $fetch('/api/spec-test-data', { method: 'POST', body: { proc_id, slot, ...patch } })
+}
+
+async function submitSpecSlot1(entry: SpecTestDataEntry) {
+  const proc = TEST_PROCEDURE_MAP.get(entry.proc_id)
+  if (!proc) {
+    specCurrent.value = `proc_id ${entry.proc_id} が TEST_PROCEDURES に無い`
+    return
+  }
+  await submitOne(proc)
+  const r = results.value.get(proc.proc_id)
+  if (r?.status === 'done' && r.arrive_id) {
+    await postSpecUpdate(entry.proc_id, 1, { 到達番号: r.arrive_id })
+    entry.slots['1'].到達番号 = r.arrive_id
+    entry.updatedAt = new Date().toISOString()
+    specEntries.value = [...specEntries.value]
+  }
+}
+
+async function submitAllSpecSlot1() {
+  if (!confirm(`データ1 が未取得の手続について申請送信します。\n${specEntries.value.filter(e => !e.slots['1'].到達番号).length} 件。続行しますか？`)) return
+  specRunning.value = true
+  specProgress.value = 0
+  const pending = specEntries.value.filter(e => !e.slots['1'].到達番号)
+  for (let i = 0; i < pending.length; i++) {
+    const entry = pending[i]!
+    specCurrent.value = `${i + 1}/${pending.length} ${entry.proc_id} 送信中...`
+    await submitSpecSlot1(entry)
+    specProgress.value = Math.round(((i + 1) / pending.length) * 100)
+    if (i < pending.length - 1) await new Promise(r => setTimeout(r, delay.value))
+  }
+  await loadSpecData()
+  specRunning.value = false
+  specCurrent.value = 'データ1 送信完了'
+}
+
+async function submitBulkForSlot1(entry: SpecTestDataEntry) {
+  const proc = TEST_PROCEDURE_MAP.get(entry.proc_id)
+  if (!proc) {
+    specCurrent.value = `proc_id ${entry.proc_id} が TEST_PROCEDURES に無い`
+    return
+  }
+  // skeleton ZIP を取得 → そのまま /bulk-apply に送る (Trial)
+  const skeleton = await apiFetch<{ results: { file_data: string } }>(`/procedure/${proc.proc_id}`)
+  const bulkRes = await $fetch<{ results: { send_number: string } }>('/api/egov/bulk-apply', {
+    method: 'POST',
+    body: { send_file: { file_name: `${proc.proc_id}-bulk.zip`, file_data: skeleton.results.file_data } },
+    headers: {
+      Authorization: `Bearer ${useEgovAuth().accessToken.value}`,
+      'x-egovapi-trial': 'true',
+    },
+  })
+  const sn = bulkRes.results?.send_number
+  if (sn) {
+    await postSpecUpdate(entry.proc_id, 1, { 送信番号: sn })
+    entry.slots['1'].送信番号 = sn
+    entry.updatedAt = new Date().toISOString()
+    specEntries.value = [...specEntries.value]
+  }
+}
+
+async function submitAllBulkSpecSlot1() {
+  const pending = specEntries.value.filter(e => !e.slots['1'].送信番号)
+  if (!confirm(`送信番号が未取得の手続について bulk送信 (Trial) します。\n${pending.length} 件。続行しますか？`)) return
+  specRunning.value = true
+  specProgress.value = 0
+  for (let i = 0; i < pending.length; i++) {
+    const entry = pending[i]!
+    specCurrent.value = `${i + 1}/${pending.length} ${entry.proc_id} bulk送信中...`
+    try {
+      await submitBulkForSlot1(entry)
+    } catch (e: unknown) {
+      const err = e as { data?: unknown; message?: string }
+      specCurrent.value = `${entry.proc_id} bulk失敗: ${err.message ?? String(e)}`
+    }
+    specProgress.value = Math.round(((i + 1) / pending.length) * 100)
+    if (i < pending.length - 1) await new Promise(r => setTimeout(r, delay.value))
+  }
+  await loadSpecData()
+  specRunning.value = false
+  specCurrent.value = `bulk送信完了: ${pending.length} 件`
+}
+
+onMounted(() => { loadSpecData().catch(() => {}) })
 
 // ============================================================
 // 照会テスト (13-1 〜 31-1)
@@ -817,6 +934,16 @@ async function runInquiryTest(item: InquiryTestItem) {
   inquiryResults.value.set(item.test_no, r)
   const client = getClient()
   const start = Date.now()
+
+  // ※最終確認試験用データ情報を参照 — e-Gov から送付されるテストデータ必須のためskip
+  if (item.needsPreparedData) {
+    r.status = 'skip'
+    r.response = '※最終確認試験用データ情報を参照（e-Govから送付される到達番号/通知通番が必要）'
+    r.durationMs = 0
+    inquiryResults.value.set(item.test_no, { ...r })
+    saveInquiryResults()
+    return
+  }
 
   try {
     switch (item.test_no) {
@@ -1169,7 +1296,7 @@ async function runInquiryTest(item: InquiryTestItem) {
       }
       case '17-1': {
         const infoId = inquiryState.informationId
-        if (!infoId) { r.status = 'skip'; r.error = '16-1のinformationIdなし'; break }
+        if (!infoId) { r.status = 'skip'; r.response = '※最終確認試験用データ情報を参照（e-Govから送付されるお知らせIDが必要）'; break }
         const res = await client.getMessage(infoId)
         r.response = `title=${(res.results as any)?.message?.title ?? 'N/A'}`
         break
@@ -1265,9 +1392,12 @@ async function runInquiryTest(item: InquiryTestItem) {
         break
       }
       case '24-1': {
-        if (!inquiryState.paymentProcId || !inquiryState.paymentNumber) throw new Error('23-1のpay_numberなし')
         const payAid24 = inquiryState.payArriveId
-        if (!payAid24) throw new Error('23-1のarriveIdなし')
+        if (!inquiryState.paymentProcId || !inquiryState.paymentNumber || !payAid24) {
+          r.status = 'skip'
+          r.response = '※最終確認試験用データ情報を参照（e-Govから送付される納付番号が必要）'
+          break
+        }
         const res = await client.displayPaymentSite({ proc_id: inquiryState.paymentProcId, arrive_id: payAid24, pay_number: inquiryState.paymentNumber, bank_name: inquiryState.bankName || 'テスト銀行' })
         r.response = JSON.stringify(res.results).substring(0, 200)
         break
@@ -1294,7 +1424,8 @@ async function runInquiryTest(item: InquiryTestItem) {
         break
       }
       case '29-1': {
-        const res = await client.listPostDeliveries({ date_from: '2020-11-24', date_to: today, limit: 10, offset: 0 })
+        // ※開始日は最終試験開始日を、終了日は現在日を指定すること
+        const res = await client.listPostDeliveries({ date_from: today, date_to: today, limit: 10, offset: 0 })
         const list = (res.results as any)?.post_list
         if (list?.[0]?.post_id) {
           inquiryState.postId_29_1 = list[0].post_id
@@ -1304,7 +1435,11 @@ async function runInquiryTest(item: InquiryTestItem) {
       }
       case '30-1': {
         const pid30 = inquiryState.postId_29_1
-        if (!pid30) throw new Error('29-1のpost_idなし')
+        if (!pid30) {
+          r.status = 'skip'
+          r.response = '※最終確認試験用データ情報を参照（e-Govから送付される電子送達post_idが必要）'
+          break
+        }
         const res = await client.getPostDelivery(pid30)
         inquiryState.postDocFileData = (res.results as any)?.file_data
         r.response = `files=${(res.results as any)?.file_name_list?.length ?? 0}`
@@ -1312,7 +1447,11 @@ async function runInquiryTest(item: InquiryTestItem) {
       }
       case '31-1': {
         const pid31 = inquiryState.postId_29_1
-        if (!pid31) throw new Error('29-1のpost_idなし')
+        if (!pid31) {
+          r.status = 'skip'
+          r.response = '※最終確認試験用データ情報を参照（e-Govから送付される電子送達post_idが必要）'
+          break
+        }
         await client.completePostDelivery({ post_id: pid31 })
         r.response = 'OK'
         break
@@ -1628,6 +1767,66 @@ const inquiryDoneCount = computed(() => [...inquiryResults.value.values()].filte
         <input v-model.number="delay" type="number" min="500" max="10000" step="500" style="width: 80px;" />
       </div>
 
+      <!-- テストデータ準備 (TID_202604130039) -->
+      <details style="margin-bottom: 20px; border: 1px solid #b8c9ff; border-radius: 8px; background: #f0f4ff;">
+        <summary style="padding: 12px 16px; cursor: pointer; font-weight: bold; font-size: 14px;">
+          テストデータ準備 (TID_202604130039) — データ1 送信番号/到達番号生成
+        </summary>
+        <div style="padding: 0 16px 16px;">
+          <p style="margin: 0 0 12px; font-size: 12px; color: #666;">
+            出力先: <code style="font-family: monospace;">{{ specResultPath }}</code><br>
+            ※ standard.json / individual-signature.json (原本) は不変。新規ファイルに追記されます。
+          </p>
+          <div style="display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; align-items: center;">
+            <button @click="submitAllSpecSlot1" :disabled="specRunning || running || (!useGbizId && enableSign && !pfxLoaded)" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
+              {{ specRunning ? '実行中...' : '全件 データ1 送信' }}
+            </button>
+            <button @click="submitAllBulkSpecSlot1" :disabled="specRunning || running" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer;">
+              全件 bulk送信 (送信番号)
+            </button>
+            <button @click="loadSpecData" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">
+              再読込
+            </button>
+            <span style="margin-left: auto; font-size: 13px;">
+              到達番号: {{ specEntries.filter(e => e.slots['1'].到達番号).length }} / {{ specEntries.length }}
+              送信番号: {{ specEntries.filter(e => e.slots['1'].送信番号).length }} / {{ specEntries.length }}
+            </span>
+          </div>
+          <div v-if="specRunning || specCurrent" style="padding: 8px; background: #e9ecef; border-radius: 4px; margin-bottom: 12px; font-size: 13px;">
+            <div v-if="specRunning" style="background: #dee2e6; border-radius: 4px; height: 6px; margin-bottom: 6px;">
+              <div :style="{ width: specProgress + '%', background: '#28a745', height: '100%', borderRadius: '4px', transition: 'width 0.3s' }" />
+            </div>
+            <span>{{ specCurrent }}</span>
+          </div>
+          <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+            <thead>
+              <tr style="background: #dee2e6;">
+                <th style="padding: 6px; text-align: left; border: 1px solid #ced4da;">format</th>
+                <th style="padding: 6px; text-align: left; border: 1px solid #ced4da;">proc_id</th>
+                <th style="padding: 6px; text-align: left; border: 1px solid #ced4da;">データの状態</th>
+                <th style="padding: 6px; text-align: left; border: 1px solid #ced4da;">データ1.到達番号</th>
+                <th style="padding: 6px; text-align: left; border: 1px solid #ced4da;">データ1.送信番号</th>
+                <th style="padding: 6px; text-align: left; border: 1px solid #ced4da;">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="entry in specEntries" :key="entry.proc_id">
+                <td style="padding: 4px 6px; border: 1px solid #ced4da;">{{ entry.format }}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ced4da; font-family: monospace;">{{ entry.proc_id }}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ced4da;">{{ entry.data_state }}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ced4da; font-family: monospace;">{{ entry.slots['1'].到達番号 || '-' }}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ced4da; font-family: monospace;">{{ entry.slots['1'].送信番号 || '-' }}</td>
+                <td style="padding: 4px 6px; border: 1px solid #ced4da;">
+                  <button @click="submitSpecSlot1(entry)" :disabled="specRunning || running" style="padding: 2px 8px; font-size: 11px; background: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer;">
+                    送信
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </details>
+
       <h2>全テスト項目 ({{ INQUIRY_TESTS.length }}件)</h2>
 
       <!-- 準備データ入力 -->
@@ -1650,6 +1849,13 @@ const inquiryDoneCount = computed(() => [...inquiryResults.value.values()].filte
       <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; align-items: center;">
         <button @click="runAllInquiry" :disabled="inquiryRunning" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
           {{ inquiryRunning ? '実行中...' : '照会テスト全件実行' }}
+        </button>
+        <button
+          @click="copyStandardForExcel"
+          style="padding: 10px 20px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer;"
+          title="送信番号\t到達番号 の TSV をクリップボードにコピー (Excel にそのまま貼付可)"
+        >
+          Excel貼付用コピー (送信→到達)
         </button>
         <button @click="exportAllResults" style="padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
           全結果ZIPダウンロード
