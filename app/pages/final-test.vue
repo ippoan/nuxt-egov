@@ -611,25 +611,38 @@ async function runAll() {
 async function fetchSendNumbers() {
   currentProc.value = '送信番号取得中...'
   try {
-    const list = await apiFetch<{ results: { apply_list: Array<{ arrive_id: string; send_number: string }> } }>('/apply/lists', {
-      date_from: '2026-01-01',
-      date_to: '2026-12-31',
-      limit: '50',
-    })
-
-    if (list.results.apply_list) {
-      for (const item of list.results.apply_list) {
-        const r = results.value.get(
-          [...results.value.entries()].find(([_, v]) => v.arrive_id === item.arrive_id)?.[0] ?? '',
-        )
-        if (r) {
+    // /apply/lists は offset 必須 (検証環境でも 400「取得ページ番号は必須」になる)
+    // 1 ページ 50 件 + offset インクリメントで全件走査して arrive_id 一致分の send_number を埋める
+    const arriveToProcId = new Map<string, string>()
+    for (const [pid, r] of results.value.entries()) {
+      if (r.arrive_id) arriveToProcId.set(r.arrive_id, pid)
+    }
+    let updated = 0
+    for (let offset = 0; offset < 5000; offset += 50) {
+      currentProc.value = `送信番号取得中... (offset=${offset})`
+      const list = await apiFetch<{ results: { apply_list: Array<{ arrive_id: string; send_number: string }> } }>('/apply/lists', {
+        date_from: '2026-01-01',
+        date_to: '2026-12-31',
+        limit: '50',
+        offset: String(offset),
+      })
+      const items = list.results.apply_list ?? []
+      for (const item of items) {
+        const pid = arriveToProcId.get(item.arrive_id)
+        if (!pid) continue
+        const r = results.value.get(pid)
+        if (!r) continue
+        // send_number が "-" は未割当（e-Gov 側で割当待ち）。実値が来たときだけ更新
+        if (item.send_number && item.send_number !== '-' && item.send_number !== r.send_number) {
           r.send_number = item.send_number
-          results.value.set(r.proc_id, { ...r })
+          results.value.set(pid, { ...r })
+          updated++
         }
       }
-      saveResults()
+      if (items.length < 50) break
     }
-    currentProc.value = '送信番号取得完了'
+    saveResults()
+    currentProc.value = `送信番号取得完了 (更新: ${updated}件 / 一致: ${arriveToProcId.size}件中)`
   }
   catch (e: unknown) {
     currentProc.value = `エラー: ${e instanceof Error ? e.message : e}`
