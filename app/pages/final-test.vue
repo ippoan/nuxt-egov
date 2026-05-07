@@ -609,43 +609,65 @@ async function runAll() {
 }
 
 async function fetchSendNumbers() {
+  // 送信番号は `/apply/lists` の send_number 列では個別 apply 送信分は返らない (常に "-")。
+  // 仕様上、送信番号は `/bulk-apply` で発行される 18 桁の番号 (results_bulk_apply.send_number)。
+  // → 未取得の手続のスケルトン ZIP を `/bulk-apply` に Trial 送信して send_number を発行してもらう。
+  // 既に done で send_number 未取得の手続のみ対象。delay は既存の送信間隔設定を流用。
+  running.value = true
   currentProc.value = '送信番号取得中...'
   try {
-    // /apply/lists は offset 必須 (検証環境でも 400「取得ページ番号は必須」になる)
-    // 1 ページ 50 件 + offset インクリメントで全件走査して arrive_id 一致分の send_number を埋める
-    const arriveToProcId = new Map<string, string>()
-    for (const [pid, r] of results.value.entries()) {
-      if (r.arrive_id) arriveToProcId.set(r.arrive_id, pid)
+    const targets = TEST_PROCEDURES.filter((p) => {
+      const r = results.value.get(p.proc_id)
+      return r?.status === 'done' && r.arrive_id && !r.send_number
+    })
+    if (targets.length === 0) {
+      currentProc.value = '送信番号取得対象なし (全件取得済み or 未送信)'
+      return
     }
     let updated = 0
-    for (let offset = 0; offset < 5000; offset += 50) {
-      currentProc.value = `送信番号取得中... (offset=${offset})`
-      const list = await apiFetch<{ results: { apply_list: Array<{ arrive_id: string; send_number: string }> } }>('/apply/lists', {
-        date_from: '2026-01-01',
-        date_to: '2026-12-31',
-        limit: '50',
-        offset: String(offset),
-      })
-      const items = list.results.apply_list ?? []
-      for (const item of items) {
-        const pid = arriveToProcId.get(item.arrive_id)
-        if (!pid) continue
-        const r = results.value.get(pid)
-        if (!r) continue
-        // send_number が "-" は未割当（e-Gov 側で割当待ち）。実値が来たときだけ更新
-        if (item.send_number && item.send_number !== '-' && item.send_number !== r.send_number) {
-          r.send_number = item.send_number
-          results.value.set(pid, { ...r })
+    let failed = 0
+    for (let i = 0; i < targets.length; i++) {
+      const proc = targets[i]!
+      currentProc.value = `送信番号取得中... ${i + 1}/${targets.length} ${proc.proc_id} bulk送信 (Trial)`
+      try {
+        // スケルトン ZIP を取得してそのまま /bulk-apply に Trial 送信
+        const skeleton = await apiFetch<{ results: { file_data: string } }>(`/procedure/${proc.proc_id}`)
+        const bulkRes = await $fetch<{ results: { send_number: string } }>('/api/egov/bulk-apply', {
+          method: 'POST',
+          body: {
+            send_file: {
+              file_name: `${proc.proc_id}-bulk.zip`,
+              file_data: skeleton.results.file_data,
+            },
+          },
+          headers: {
+            Authorization: `Bearer ${useEgovAuth().accessToken.value}`,
+            'x-egovapi-trial': 'true',
+          },
+        })
+        const sn = bulkRes.results?.send_number
+        if (sn) {
+          const r = results.value.get(proc.proc_id)!
+          r.send_number = sn
+          results.value.set(proc.proc_id, { ...r })
           updated++
         }
       }
-      if (items.length < 50) break
+      catch (e: unknown) {
+        failed++
+        const err = e as { data?: { data?: unknown }; message?: string }
+        console.error(`[${proc.proc_id}] bulk-apply failed:`, err.data?.data ?? err.message ?? e)
+      }
+      saveResults()
+      if (i < targets.length - 1) await new Promise(r => setTimeout(r, delay.value))
     }
-    saveResults()
-    currentProc.value = `送信番号取得完了 (更新: ${updated}件 / 一致: ${arriveToProcId.size}件中)`
+    currentProc.value = `送信番号取得完了 (取得: ${updated}件 / 失敗: ${failed}件 / 対象: ${targets.length}件)`
   }
   catch (e: unknown) {
     currentProc.value = `エラー: ${e instanceof Error ? e.message : e}`
+  }
+  finally {
+    running.value = false
   }
 }
 
