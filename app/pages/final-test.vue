@@ -1,5 +1,6 @@
 <script setup lang="ts">
 const BUILD_TIME = '20260415-0430'
+import { EgovApiError } from '@ippoan/egov-shinsei-sdk'
 import type { EgovClient } from '@ippoan/egov-shinsei-sdk'
 import { EgovApiError } from '@ippoan/egov-shinsei-sdk'
 import JSZip from 'jszip'
@@ -1880,107 +1881,77 @@ const inquiryDoneCount = computed(() => [...inquiryResults.value.values()].filte
         </div>
       </div>
 
-      <div style="display: flex; align-items: center; gap: 12px; margin-top: 20px;">
-        <h2 style="margin: 0;">標準形式 ({{ standardProcs.length }}件)</h2>
+      <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; align-items: center;">
+        <button @click="runAllInquiry" :disabled="inquiryRunning" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
+          {{ inquiryRunning ? '実行中...' : '照会テスト全件実行' }}
+        </button>
         <button
           @click="copyStandardForExcel"
-          style="padding: 4px 12px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;"
+          style="padding: 10px 20px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer;"
           title="送信番号\t到達番号 の TSV をクリップボードにコピー (Excel にそのまま貼付可)"
         >
           Excel貼付用コピー (送信→到達)
         </button>
+        <button @click="exportAllResults" style="padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
+          全結果ZIPダウンロード
+        </button>
+        <button @click="exportInquiryCsv" style="padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">
+          照会CSV出力
+        </button>
+        <button @click="resetInquiry" :disabled="inquiryRunning" style="padding: 10px 20px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;">
+          照会リセット
+        </button>
+        <span style="margin-left: auto;">
+          完了: {{ inquiryDoneCount }} / {{ INQUIRY_TESTS.length }}
+        </span>
       </div>
-      <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 13px;">
-        <thead>
-          <tr style="background: #f8f9fa;">
-            <th style="border: 1px solid #dee2e6; padding: 6px;">No</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">手続識別子</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">期待状態</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">備考</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">状態</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">送信番号</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">到達番号</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <template v-for="proc in standardProcs" :key="proc.proc_id">
-          <tr>
-            <td style="border: 1px solid #dee2e6; padding: 4px; text-align: center;">{{ proc.no }}</td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 12px;">{{ proc.proc_id }}</td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; font-size: 12px;">{{ proc.expected_state }}</td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; font-size: 12px;">{{ proc.note }}</td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; text-align: center;">
-              <span v-if="getResult(proc.proc_id).status === 'done'" style="color: #28a745;">完了</span>
-              <span v-else-if="getResult(proc.proc_id).status === 'error'" style="color: #dc3545;">エラー</span>
-              <span v-else-if="getResult(proc.proc_id).status === 'skeleton'" style="color: #ffc107;">取得中</span>
-              <span v-else-if="getResult(proc.proc_id).status === 'submitting'" style="color: #17a2b8;">送信中</span>
-              <span v-else style="color: #6c757d;">待機</span>
-            </td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 11px;">{{ getResult(proc.proc_id).send_number ?? '' }}</td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 11px;">{{ getResult(proc.proc_id).arrive_id ?? '' }}</td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; text-align: center;">
-              <button
-                @click="submitOne(proc, true)"
-                :disabled="running || getResult(proc.proc_id).status === 'done'"
-                style="padding: 2px 8px; font-size: 12px; cursor: pointer;"
-              >
-                実行
-              </button>
-            </td>
-          </tr>
-          <tr v-if="getResult(proc.proc_id).status === 'error'">
-            <td colspan="8" style="border: 1px solid #dee2e6; padding: 4px 8px; background: #fff5f5; color: #dc3545; font-size: 12px; word-break: break-all; white-space: pre-wrap; cursor: pointer;" @click="copyResult(proc)">
-              <span style="color: #999; font-size: 10px;">[{{ gitCommit }}]</span> {{ getResult(proc.proc_id).error }}
-            </td>
-          </tr>
-          </template>
-        </tbody>
-      </table>
 
-      <h2>個別署名形式 ({{ individualProcs.length }}件)</h2>
+      <div v-if="inquiryRunning" style="padding: 10px; background: #e9ecef; border-radius: 4px; margin-bottom: 20px;">
+        <div style="background: #dee2e6; border-radius: 4px; height: 8px; margin-bottom: 8px;">
+          <div :style="{ width: inquiryProgress + '%', background: '#28a745', height: '100%', borderRadius: '4px', transition: 'width 0.3s' }" />
+        </div>
+      </div>
+
       <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
         <thead>
           <tr style="background: #f8f9fa;">
             <th style="border: 1px solid #dee2e6; padding: 6px;">No</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">手続識別子</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">期待状態</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">備考</th>
+            <th style="border: 1px solid #dee2e6; padding: 6px;">カテゴリ</th>
+            <th style="border: 1px solid #dee2e6; padding: 6px;">API名</th>
             <th style="border: 1px solid #dee2e6; padding: 6px;">状態</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">送信番号</th>
-            <th style="border: 1px solid #dee2e6; padding: 6px;">到達番号</th>
+            <th style="border: 1px solid #dee2e6; padding: 6px;">レスポンス</th>
+            <th style="border: 1px solid #dee2e6; padding: 6px;">ms</th>
             <th style="border: 1px solid #dee2e6; padding: 6px;">操作</th>
           </tr>
         </thead>
         <tbody>
-          <template v-for="proc in individualProcs" :key="proc.proc_id">
+          <template v-for="item in INQUIRY_TESTS" :key="item.test_no">
           <tr>
-            <td style="border: 1px solid #dee2e6; padding: 4px; text-align: center;">{{ proc.no }}</td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 12px;">{{ proc.proc_id }}</td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; font-size: 12px;">{{ proc.expected_state }}</td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; font-size: 12px;">{{ proc.note }}</td>
+            <td style="border: 1px solid #dee2e6; padding: 4px; text-align: center;">{{ item.test_no }}</td>
+            <td style="border: 1px solid #dee2e6; padding: 4px; font-size: 12px;">{{ item.category }}</td>
+            <td style="border: 1px solid #dee2e6; padding: 4px; font-size: 12px;">{{ item.api_name }}</td>
             <td style="border: 1px solid #dee2e6; padding: 4px; text-align: center;">
-              <span v-if="getResult(proc.proc_id).status === 'done'" style="color: #28a745;">完了</span>
-              <span v-else-if="getResult(proc.proc_id).status === 'error'" style="color: #dc3545;">エラー</span>
-              <span v-else-if="getResult(proc.proc_id).status === 'skeleton'" style="color: #ffc107;">取得中</span>
-              <span v-else-if="getResult(proc.proc_id).status === 'submitting'" style="color: #17a2b8;">送信中</span>
+              <span v-if="getInquiryResult(item.test_no).status === 'pass'" style="color: #28a745;">pass</span>
+              <span v-else-if="getInquiryResult(item.test_no).status === 'error'" style="color: #dc3545;">error</span>
+              <span v-else-if="getInquiryResult(item.test_no).status === 'skip'" style="color: #ffc107;">skip</span>
+              <span v-else-if="getInquiryResult(item.test_no).status === 'running'" style="color: #17a2b8;">実行中</span>
               <span v-else style="color: #6c757d;">待機</span>
             </td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 11px;">{{ getResult(proc.proc_id).send_number ?? '' }}</td>
-            <td style="border: 1px solid #dee2e6; padding: 4px; font-family: monospace; font-size: 11px;">{{ getResult(proc.proc_id).arrive_id ?? '' }}</td>
+            <td style="border: 1px solid #dee2e6; padding: 4px; font-size: 11px; font-family: monospace; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ getInquiryResult(item.test_no).response ?? '' }}</td>
+            <td style="border: 1px solid #dee2e6; padding: 4px; text-align: right; font-size: 11px;">{{ getInquiryResult(item.test_no).durationMs ?? '' }}</td>
             <td style="border: 1px solid #dee2e6; padding: 4px; text-align: center;">
               <button
-                @click="submitOne(proc, true)"
-                :disabled="running || getResult(proc.proc_id).status === 'done'"
+                @click="runInquiryTest(item)"
+                :disabled="inquiryRunning || getInquiryResult(item.test_no).status === 'pass'"
                 style="padding: 2px 8px; font-size: 12px; cursor: pointer;"
               >
                 実行
               </button>
             </td>
           </tr>
-          <tr v-if="getResult(proc.proc_id).status === 'error'">
-            <td colspan="8" style="border: 1px solid #dee2e6; padding: 4px 8px; background: #fff5f5; color: #dc3545; font-size: 12px; word-break: break-all; white-space: pre-wrap; cursor: pointer;" @click="copyResult(proc)">
-              <span style="color: #999; font-size: 10px;">[{{ gitCommit }}]</span> {{ getResult(proc.proc_id).error }}
+          <tr v-if="getInquiryResult(item.test_no).status === 'error'">
+            <td colspan="7" style="border: 1px solid #dee2e6; padding: 4px 8px; background: #fff5f5; color: #dc3545; font-size: 12px; word-break: break-all; white-space: pre-wrap;">
+              {{ getInquiryResult(item.test_no).error }}
             </td>
           </tr>
           </template>
