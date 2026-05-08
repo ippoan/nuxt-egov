@@ -8,6 +8,17 @@ import { TEST_PROCEDURES, PROCS_WITH_DESTINATION, type TestProcedure } from '~/u
 const { isAuthenticated, startLogin, logout, apiFetch, getClient } = useEgovAuth()
 const { pfxLoaded, certSubject, extraPfxCount, loadPfx, loadTestPfx, loadExtraPfx, signKouseiXml, signConfigXml } = useXmlSign()
 
+// 個別署名形式の SignAttach 添付対象として使う最小 PDF (1 page A4 blank, ASCII only)
+// ASCII-only にすることで sign.ts の forge.util.encodeUtf8 を通っても digest が不変になる
+const TEST_PDF_BASE64 = 'JVBERi0xLjQKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZy9QYWdlcyAyIDAgUj4+ZW5kb2JqIDIgMCBvYmo8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PmVuZG9iaiAzIDAgb2JqPDwvVHlwZS9QYWdlL1BhcmVudCAyIDAgUi9NZWRpYUJveFswIDAgNjEyIDc5Ml0+PmVuZG9iagp4cmVmCjAgNAowMDAwMDAwMDAwIDY1NTM1IGYKMDAwMDAwMDAxMCAwMDAwMCBuCjAwMDAwMDAwNTMgMDAwMDAgbgowMDAwMDAwMDk0IDAwMDAwIG4KdHJhaWxlcjw8L1NpemUgNC9Sb290IDEgMCBSPj4Kc3RhcnR4cmVmCjE0OQolJUVPRgo='
+
+function testPdfBytes(): Uint8Array {
+  const bin = atob(TEST_PDF_BASE64)
+  const arr = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i)
+  return arr
+}
+
 const useGbizId = ref(false)
 const enableSign = ref(true)
 const pfxPassword = ref('gpkitest')
@@ -273,16 +284,21 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
           xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
           xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
         }
-        // 添付書類属性情報: 4 件 (apply + config[1] + config[2] + dummy) — 仕様準拠
+        // 添付書類属性情報: 4 件 — 5/7 e-Gov 正解サンプル (950A101220029000) 準拠
+        // 順序: WriteAppli構成情報 → 申請書本体 → SignAttach構成情報 → 実添付ファイル
+        // 本番送信モード (Trial off) では apply への明示参照が必須 (Trial だけだと省略可能だが apply で「添付必須」エラー)
         if (fi0) {
           let attachBlocks = ''
+          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>${fi0.form_name}の構成情報</添付書類名称><添付書類ファイル名称>${configFiles[2]}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
           attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>${fi0.form_name}</添付書類名称><添付書類ファイル名称>${fi0.apply_file_name}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
-          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名構成情報</添付書類名称><添付書類ファイル名称>${configFiles[1]}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
-          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>申請書作成構成情報</添付書類名称><添付書類ファイル名称>${configFiles[2]}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
-          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名ファイル１</添付書類名称><添付書類ファイル名称>dummy.txt</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
+          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名ファイル１の構成情報</添付書類名称><添付書類ファイル名称>${configFiles[1]}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
+          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名ファイル１</添付書類名称><添付書類ファイル名称>Test.pdf</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
           xml = xml.replace('</管理情報>', '</管理情報>' + attachBlocks)
         }
-        // 申請書属性情報は入れない (個別形式 仕様 No.119)
+        // 申請書属性情報を削除 — 仕様書 (kouseikanri 項番 119) +「個別ファイル署名形式手続の場合は本タグは設定しない」
+        // 5/7 e-Gov 正解サンプルでも main kousei.xml には申請書属性情報なし
+        xml = xml.replace(/<申請書属性情報>[\s\S]*?<\/申請書属性情報>/g, '')
+        xml = xml.replace(/<申請書属性情報\s*\/>/g, '')
         zip.file(mainPath, xml)
       }
 
@@ -303,14 +319,14 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
           xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
           xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
         }
-        // 添付書類属性情報: apply + dummy (v6で確認: apply無しだと「添付必須」エラー) — 仕様 No.48
-        if (!xml.includes('<添付書類属性情報>') && fi0) {
-          let attachBlocks = ''
-          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>${fi0.form_name}</添付書類名称><添付書類ファイル名称>${fi0.apply_file_name}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
-          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名ファイル１</添付書類名称><添付書類ファイル名称>dummy.txt</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
-          xml = xml.replace('</管理情報>', '</管理情報>' + attachBlocks)
+        // 添付書類属性情報: e-Gov 5/7 正解サンプル準拠 — Test.pdf 1 件のみ
+        if (!xml.includes('<添付書類属性情報>')) {
+          const attachBlock = `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名ファイル１</添付書類名称><添付書類ファイル名称>Test.pdf</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
+          xml = xml.replace('</管理情報>', '</管理情報>' + attachBlock)
         }
-        // 申請書属性情報は入れない（添付書類に対する署名の場合は省略）
+        // 申請書属性情報を削除 (構成管理 XML 共通: 申請書送信では禁止)
+        xml = xml.replace(/<申請書属性情報>[\s\S]*?<\/申請書属性情報>/g, '')
+        xml = xml.replace(/<申請書属性情報\s*\/>/g, '')
         zip.file(signAttachPath, xml)
       }
 
@@ -331,15 +347,20 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
           xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
           xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
         }
-        // WriteAppli: 申請書属性情報 値あり (仕様 No.119 必須)
+        // WriteAppli (申請書作成) — e-Gov 5/7 正解サンプル + 仕様書 (beshi_kyoutsudata_kousei.json 項番 48, 119) 準拠:
+        // - <添付書類属性情報>: 設定しない (申請書に対する構成情報では不要)
+        // - <申請書属性情報>: 設定する (form_id/version/name/apply_file_name)
+        // ※ 2026-05-08 時点で実機が「申請書送信の場合は指定することができません」を返すため要 e-Gov 追加照会
+        xml = xml.replace(/<添付書類属性情報>[\s\S]*?<\/添付書類属性情報>/g, '')
+        xml = xml.replace(/<添付書類属性情報\s*\/>/g, '')
         if (!xml.includes('<申請書属性情報>') && fi0) {
           const shinseishoBlock = `<申請書属性情報><申請書様式ID>${fi0.form_id}</申請書様式ID><申請書様式バージョン>${String(fi0.form_version).padStart(4, '0')}</申請書様式バージョン><申請書様式名称>${fi0.form_name}</申請書様式名称><申請書ファイル名称>${fi0.apply_file_name}</申請書ファイル名称></申請書属性情報>`
           xml = xml.replace('</構成情報>', shinseishoBlock + '</構成情報>')
         }
         zip.file(writeAppliPath, xml)
       }
-      // ダミー添付ファイルをZIPに追加（添付書類署名対象）
-      zip.file(`${proc.proc_id}/dummy.txt`, 'test')
+      // 添付書類署名対象の最小 PDF を ZIP に追加 (ASCII-only、digest 不変)
+      zip.file(`${proc.proc_id}/Test.pdf`, testPdfBytes(), { binary: true })
     } else {
       // 標準形式: 既存ロジック（全configFileに同じkouseiTestValuesを適用）
       for (const configFileName of configFiles) {
@@ -471,16 +492,16 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
         // 個別署名形式: Main kousei.xml は署名不要（構成管理XMLに署名値が存在しない仕様）
         // WriteAppli / SignAttach のみ署名
 
-        // --- configFiles[1] = SignAttach: dummy.txt を参照して署名 ---
+        // --- configFiles[1] = SignAttach: Test.pdf を参照して署名 (バイナリ uint8array で digest 計算) ---
         const saSignPath = `${proc.proc_id}/${configFiles[1]}`
         const saSignFile = zip.file(saSignPath)
         if (saSignFile) {
           let saXml = await saSignFile.async('string')
-          const dummyFile = zip.file(`${proc.proc_id}/dummy.txt`)
-          if (dummyFile) {
-            const dummyContent = await dummyFile.async('string')
+          const pdfFile = zip.file(`${proc.proc_id}/Test.pdf`)
+          if (pdfFile) {
+            const pdfContent = await pdfFile.async('uint8array')
             currentProc.value = `${proc.no}. SignAttach署名付与中...`
-            saXml = signConfigXml(saXml, 'dummy.txt', dummyContent)
+            saXml = signConfigXml(saXml, 'Test.pdf', pdfContent)
             console.log(`[${proc.proc_id}] SignAttach (signed):`, saXml.substring(0, 3000))
             zip.file(saSignPath, saXml)
           }
