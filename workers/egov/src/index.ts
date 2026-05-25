@@ -3,7 +3,6 @@ export interface Env {
   EGOV_API_BASE: string;
   EGOV_CLIENT_ID: string;
   EGOV_CLIENT_SECRET: SecretsStoreSecret;
-  WORKER_API_KEY: SecretsStoreSecret;
 }
 
 const JSON_HEADERS = { 'content-type': 'application/json' };
@@ -13,14 +12,6 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
     ...init,
     headers: { ...JSON_HEADERS, ...(init.headers ?? {}) },
   });
-}
-
-async function requireApiKey(req: Request, env: Env): Promise<Response | null> {
-  const auth = req.headers.get('x-worker-api-key') ?? '';
-  if (!auth) return jsonResponse({ error: 'missing_x_worker_api_key' }, { status: 401 });
-  const expected = await env.WORKER_API_KEY.get();
-  if (auth !== expected) return jsonResponse({ error: 'invalid_api_key' }, { status: 401 });
-  return null;
 }
 
 async function handleHealth(): Promise<Response> {
@@ -77,6 +68,7 @@ async function handleToken(req: Request, env: Env): Promise<Response> {
 }
 
 // e-Gov v2 API への透過 proxy。Authorization (Bearer access_token) は caller 提供。
+// 不正 token は e-Gov 側で 401 になるため worker 自前の gate は無し。
 async function handleProxy(req: Request, env: Env, subpath: string): Promise<Response> {
   const inUrl = new URL(req.url);
   const targetUrl = `${env.EGOV_API_BASE}/${subpath}${inUrl.search}`;
@@ -105,10 +97,6 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === '/health') return handleHealth();
-
-    const gate = await requireApiKey(req, env);
-    if (gate) return gate;
-
     if (url.pathname === '/token') return handleToken(req, env);
     if (url.pathname.startsWith('/api/')) {
       return handleProxy(req, env, url.pathname.slice('/api/'.length));

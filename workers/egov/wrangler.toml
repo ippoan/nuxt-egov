@@ -23,19 +23,13 @@ custom_domain = true
 
 # 共有 secrets store。auth-worker / ref-files-worker と同じ account-level store。
 # secret_name は Nuxt app と共用 (NUXT_ prefix 付き既存 entry を再利用)。
-# binding 名は worker 内で参照する env var 名。
 #
-# **EGOV_REFRESH_TOKEN は意図的に持たない** — caller (Nuxt app / browser) が
-# 自分の refresh_token を /token endpoint の grant_type=refresh_token で送ってきて、
-# 本 worker は client_secret だけ inject して e-Gov に転送する pattern。
-# refresh_token を backend で集中保持しないことで、1 token 漏洩 = 全ユーザー
-# なりすましの事故を防ぐ。
+# **EGOV_REFRESH_TOKEN / WORKER_API_KEY は持たない** — caller (Nuxt app / browser)
+# が自分の refresh_token を /token endpoint の grant_type=refresh_token で送って
+# きて、本 worker は client_secret だけ inject して e-Gov に転送する pattern。
+# /api/** は caller の Authorization: Bearer をそのまま e-Gov に透過するだけで、
+# 不正 token は e-Gov 側で 401 になるため worker 自前の gate は不要。
 [[secrets_store_secrets]]
 binding = "EGOV_CLIENT_SECRET"
 store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
 secret_name = "NUXT_EGOV_CLIENT_SECRET"
-
-[[secrets_store_secrets]]
-binding = "WORKER_API_KEY"
-store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
-secret_name = "NUXT_EGOV_API_KEY"

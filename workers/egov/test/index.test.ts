@@ -11,7 +11,6 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
     EGOV_API_BASE: 'https://api.test/v2',
     EGOV_CLIENT_ID: 'client-id',
     EGOV_CLIENT_SECRET: makeSecret('client-secret'),
-    WORKER_API_KEY: makeSecret('test-api-key'),
     ...overrides,
   };
 }
@@ -24,46 +23,23 @@ afterEach(() => {
 });
 
 describe('GET /health', () => {
-  it('returns 200 ok without api key', async () => {
+  it('returns 200 ok', async () => {
     const res = await worker.fetch(new Request('https://w/health'), makeEnv());
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
   });
 });
 
-describe('api key gate', () => {
-  it('/token rejects missing api key', async () => {
-    const res = await worker.fetch(
-      new Request('https://w/token', { method: 'POST', body: '{}' }),
-      makeEnv(),
-    );
-    expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: 'missing_x_worker_api_key' });
-  });
-
-  it('/api rejects wrong api key', async () => {
-    const res = await worker.fetch(
-      new Request('https://w/api/procedures/1', { headers: { 'x-worker-api-key': 'wrong' } }),
-      makeEnv(),
-    );
-    expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: 'invalid_api_key' });
-  });
-
-  it('unknown path with valid key returns 404', async () => {
-    const res = await worker.fetch(
-      new Request('https://w/nope', { headers: { 'x-worker-api-key': 'test-api-key' } }),
-      makeEnv(),
-    );
+describe('unknown route', () => {
+  it('returns 404', async () => {
+    const res = await worker.fetch(new Request('https://w/nope'), makeEnv());
     expect(res.status).toBe(404);
   });
 });
 
 describe('POST /token', () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
-
   beforeEach(() => {
-    fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       if (url === 'https://auth.test/token') {
         return new Response(
@@ -79,15 +55,11 @@ describe('POST /token', () => {
         );
       }
       throw new Error(`unexpected fetch: ${url}`);
-    });
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    }) as unknown as typeof fetch;
   });
 
   it('rejects non-POST', async () => {
-    const res = await worker.fetch(
-      new Request('https://w/token', { headers: { 'x-worker-api-key': 'test-api-key' } }),
-      makeEnv(),
-    );
+    const res = await worker.fetch(new Request('https://w/token'), makeEnv());
     expect(res.status).toBe(405);
   });
 
@@ -95,7 +67,7 @@ describe('POST /token', () => {
     const res = await worker.fetch(
       new Request('https://w/token', {
         method: 'POST',
-        headers: { 'x-worker-api-key': 'test-api-key', 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ grant_type: 'password' }),
       }),
       makeEnv(),
@@ -108,7 +80,7 @@ describe('POST /token', () => {
     const res = await worker.fetch(
       new Request('https://w/token', {
         method: 'POST',
-        headers: { 'x-worker-api-key': 'test-api-key', 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           grant_type: 'authorization_code',
           code: 'auth-code-1',
@@ -124,7 +96,6 @@ describe('POST /token', () => {
     expect(body.received).toContain('grant_type=authorization_code');
     expect(body.received).toContain('code=auth-code-1');
     expect(body.received).toContain('code_verifier=v');
-    // client-id:client-secret = "client-id:client-secret" を base64 した値。
     expect(body.received_auth).toBe(`Basic ${btoa('client-id:client-secret')}`);
   });
 
@@ -132,7 +103,7 @@ describe('POST /token', () => {
     const res = await worker.fetch(
       new Request('https://w/token', {
         method: 'POST',
-        headers: { 'x-worker-api-key': 'test-api-key', 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: 'rt-1' }),
       }),
       makeEnv(),
@@ -165,10 +136,7 @@ describe('/api/* proxy', () => {
   it('forwards caller Authorization to e-Gov', async () => {
     const res = await worker.fetch(
       new Request('https://w/api/procedures/123?foo=bar', {
-        headers: {
-          'x-worker-api-key': 'test-api-key',
-          'authorization': 'Bearer caller-token',
-        },
+        headers: { 'authorization': 'Bearer caller-token' },
       }),
       makeEnv(),
     );
