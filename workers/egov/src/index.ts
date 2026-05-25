@@ -4,7 +4,6 @@ export interface Env {
   EGOV_AUTH_BASE: string;
   EGOV_API_BASE: string;
   EGOV_CLIENT_ID: string;
-  TOKEN_CACHE: KVNamespace;
   EGOV_CLIENT_SECRET: SecretsStoreSecret;
   EGOV_REFRESH_TOKEN: SecretsStoreSecret;
   WORKER_API_KEY: SecretsStoreSecret;
@@ -42,7 +41,6 @@ async function handleProxy(req: Request, env: Env, subpath: string): Promise<Res
     env.EGOV_REFRESH_TOKEN.get(),
   ]);
   const accessToken = await getAccessToken({
-    cache: env.TOKEN_CACHE,
     authBase: env.EGOV_AUTH_BASE,
     clientId: env.EGOV_CLIENT_ID,
     clientSecret,

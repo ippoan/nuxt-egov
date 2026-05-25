@@ -21,12 +21,8 @@ head_sampling_rate = 1
 pattern = "egov-staging.ippoan.org"
 custom_domain = true
 
-# Access token cache。worker isolate 横断で持たせるため KV にする。
-# 初回 deploy 前に `wrangler kv:namespace create EGOV_TOKEN_CACHE` で作成し
-# id をここに書き込む (placeholder のままだと deploy 時にエラー)。
-[[kv_namespaces]]
-binding = "TOKEN_CACHE"
-id = "PLACEHOLDER_REPLACE_WITH_KV_ID"
+# Access token cache は worker isolate の module-level 変数で持つ
+# (e-Gov の 1h token 寿命なら KV を挟むほどの恩恵が無い)。
 
 # 共有 secrets store。auth-worker / ref-files-worker と同じ account-level store。
 # 値は secrets-inventory 経由で投入する (secret-rotate-pipe skill)。

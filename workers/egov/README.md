@@ -30,16 +30,16 @@ Nuxt nitro worker (`server/api/egov/*`) でも proxy はできるが、
 cd workers/egov
 npm install
 
-# KV 名前空間を作る (1 度きり)。出力された id を wrangler.toml の
-# PLACEHOLDER_REPLACE_WITH_KV_ID に書き戻す。
-npx wrangler kv:namespace create EGOV_TOKEN_CACHE
-
 # Secrets Store entry を作成 (secrets-inventory の secret-rotate-pipe skill を使うと
 # 値が LLM context に乗らない)。
 #   - EGOV_CLIENT_SECRET (`NUXT_EGOV_CLIENT_SECRET` と同値)
 #   - EGOV_REFRESH_TOKEN (e-Gov OAuth で発行した refresh_token)
 #   - EGOV_WORKER_API_KEY (Nuxt app との共有 secret; ランダム生成)
 ```
+
+access_token cache は worker isolate の module-level 変数で保持する。
+isolate が落ちたら次回 request で 1 度だけ refresh が走るだけなので、
+KV / Durable Object を挟む必要は無い (e-Gov access_token は 1h 寿命)。
 
 ## ローカル動作確認
 

@@ -1,27 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker, { type Env } from '../src/index';
-
-interface KVRecord {
-  value: string;
-  expirationTtl?: number;
-}
-
-function makeKV(): KVNamespace {
-  const store = new Map<string, KVRecord>();
-  return {
-    async get(key: string, type?: string) {
-      const rec = store.get(key);
-      if (!rec) return null;
-      return type === 'json' ? JSON.parse(rec.value) : rec.value;
-    },
-    async put(key: string, value: string, opts?: { expirationTtl?: number }) {
-      store.set(key, { value, expirationTtl: opts?.expirationTtl });
-    },
-    async delete(key: string) {
-      store.delete(key);
-    },
-  } as unknown as KVNamespace;
-}
+import { _resetTokenCache } from '../src/token-cache';
 
 function makeSecret(value: string): SecretsStoreSecret {
   return { get: async () => value } as unknown as SecretsStoreSecret;
@@ -32,7 +11,6 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
     EGOV_AUTH_BASE: 'https://auth.test',
     EGOV_API_BASE: 'https://api.test/v2',
     EGOV_CLIENT_ID: 'client-id',
-    TOKEN_CACHE: makeKV(),
     EGOV_CLIENT_SECRET: makeSecret('client-secret'),
     EGOV_REFRESH_TOKEN: makeSecret('refresh-token'),
     WORKER_API_KEY: makeSecret('test-api-key'),
@@ -45,11 +23,12 @@ const originalFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = originalFetch;
   vi.restoreAllMocks();
+  _resetTokenCache();
 });
 
 describe('GET /health', () => {
   it('returns 200 ok', async () => {
-    const res = await worker.fetch(new Request('https://w/health'), makeEnv(), {} as ExecutionContext);
+    const res = await worker.fetch(new Request('https://w/health'), makeEnv());
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
   });
@@ -57,14 +36,14 @@ describe('GET /health', () => {
 
 describe('unknown route', () => {
   it('returns 404', async () => {
-    const res = await worker.fetch(new Request('https://w/nope'), makeEnv(), {} as ExecutionContext);
+    const res = await worker.fetch(new Request('https://w/nope'), makeEnv());
     expect(res.status).toBe(404);
   });
 });
 
 describe('/api/* auth', () => {
   it('rejects missing Authorization', async () => {
-    const res = await worker.fetch(new Request('https://w/api/procedures/1'), makeEnv(), {} as ExecutionContext);
+    const res = await worker.fetch(new Request('https://w/api/procedures/1'), makeEnv());
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ error: 'missing_authorization' });
   });
@@ -73,7 +52,6 @@ describe('/api/* auth', () => {
     const res = await worker.fetch(
       new Request('https://w/api/procedures/1', { headers: { authorization: 'Bearer wrong' } }),
       makeEnv(),
-      {} as ExecutionContext,
     );
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ error: 'invalid_api_key' });
@@ -82,7 +60,6 @@ describe('/api/* auth', () => {
 
 describe('/api/* proxy', () => {
   beforeEach(() => {
-    // Token endpoint と upstream API を順次返す fetch mock。
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       if (url === 'https://auth.test/token') {
@@ -107,20 +84,18 @@ describe('/api/* proxy', () => {
     const res = await worker.fetch(
       new Request('https://w/api/procedures/123?foo=bar', { headers: { authorization: 'Bearer test-api-key' } }),
       env,
-      {} as ExecutionContext,
     );
     expect(res.status).toBe(200);
     const body = await res.json() as { proxied: boolean; url: string };
     expect(body.proxied).toBe(true);
     expect(body.url).toBe('https://api.test/v2/procedures/123?foo=bar');
 
-    // 2 回目は cache hit で token endpoint を叩かない。
+    // 2 回目は module-level cache hit で token endpoint を叩かない。
     const fetchSpy = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
     fetchSpy.mockClear();
     await worker.fetch(
       new Request('https://w/api/procedures/123', { headers: { authorization: 'Bearer test-api-key' } }),
       env,
-      {} as ExecutionContext,
     );
     const calls = fetchSpy.mock.calls.map((c) => (typeof c[0] === 'string' ? c[0] : (c[0] as URL).toString()));
     expect(calls.some((u) => u === 'https://auth.test/token')).toBe(false);
