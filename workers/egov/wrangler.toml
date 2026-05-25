@@ -1,0 +1,47 @@
+name = "egov-staging"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+# nuxt-egov 本体と同じ Cloudflare account
+account_id = "24b45709d060d957340180e995f0d373"
+
+[vars]
+# e-Gov 試験 API endpoint (公開情報 — ハードコード)。
+EGOV_AUTH_BASE = "https://account2.sbx.e-gov.go.jp/auth"
+EGOV_API_BASE = "https://api2.sbx.e-gov.go.jp/shinsei/v2"
+# Nuxt app と同じ Software ID。client_secret / refresh_token は Secrets Store。
+EGOV_CLIENT_ID = "K26XGOmbDusxfKsp"
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+# 公開 URL — staging=実運用環境モデル (Refs ippoan/secrets-inventory)。
+[[routes]]
+pattern = "egov-staging.ippoan.org"
+custom_domain = true
+
+# Access token cache。worker isolate 横断で持たせるため KV にする。
+# 初回 deploy 前に `wrangler kv:namespace create EGOV_TOKEN_CACHE` で作成し
+# id をここに書き込む (placeholder のままだと deploy 時にエラー)。
+[[kv_namespaces]]
+binding = "TOKEN_CACHE"
+id = "PLACEHOLDER_REPLACE_WITH_KV_ID"
+
+# 共有 secrets store。auth-worker / ref-files-worker と同じ account-level store。
+# 値は secrets-inventory 経由で投入する (secret-rotate-pipe skill)。
+[[secrets_store_secrets]]
+binding = "EGOV_CLIENT_SECRET"
+store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
+secret_name = "EGOV_CLIENT_SECRET"
+
+[[secrets_store_secrets]]
+binding = "EGOV_REFRESH_TOKEN"
+store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
+secret_name = "EGOV_REFRESH_TOKEN"
+
+# Nuxt app ↔ worker 間の共有 API key。`Authorization: Bearer <key>` で proxy を gate。
+[[secrets_store_secrets]]
+binding = "WORKER_API_KEY"
+store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
+secret_name = "EGOV_WORKER_API_KEY"

@@ -1,0 +1,44 @@
+name: egov-worker CI
+
+# `workers/egov/` の egov-staging worker (SDK ラッパー proxy) 専用 caller。
+# Nuxt app 側の test.yml と独立して走る。trigger を path filter で限定する
+# ことで Nuxt-only な PR で本 workflow が無駄に動かないようにする。
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths:
+      - 'workers/egov/**'
+      - '.github/workflows/egov-worker-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'workers/egov/**'
+      - '.github/workflows/egov-worker-ci.yml'
+
+# frontend-ci.yml は内蔵 auto-merge / secret-verify を持つため top-level で
+# Option A (contents:write + pull-requests:write + packages:read + id-token:write)
+# が必須。Refs ippoan/ci-workflows CLAUDE.md。
+permissions:
+  contents: write
+  pull-requests: write
+  packages: read
+  id-token: write
+
+jobs:
+  ci:
+    uses: ippoan/ci-workflows/.github/workflows/frontend-ci.yml@main
+    with:
+      project_type: worker
+      working_directory: workers/egov
+      # lockfile 未コミット (GitHub Packages auth が必要なため CI で生成) なので
+      # `npm ci` ではなく `npm install` を使う。同じ理由で cache_dependency_path
+      # は root の lockfile に fallback させる。
+      install_command: 'npm install'
+      typecheck_command: 'npx tsc --noEmit'
+      has_tests: true
+      npm_scope: '@ippoan'
+      deploy_staging_script: 'npx wrangler deploy'
+      deploy_release_script: 'npx wrangler deploy'
+    secrets: inherit

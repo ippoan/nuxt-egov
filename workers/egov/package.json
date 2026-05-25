@@ -1,0 +1,23 @@
+{
+  "name": "egov-staging-worker",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "test": "vitest run --coverage --reporter=default --reporter=json --outputFile.json=coverage/test-results.json",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ippoan/egov-shinsei-sdk": "^0.0.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241127.0",
+    "@vitest/coverage-v8": "^2.1.8",
+    "msw": "^2.7.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8",
+    "wrangler": "^3.95.0"
+  }
+}
