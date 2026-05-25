@@ -1,59 +1,48 @@
 # egov-staging worker
 
-`@ippoan/egov-shinsei-sdk` を server-side で握る薄い proxy worker。
-`egov-staging.ippoan.org` で公開し、Nuxt app (`egov-check-staging.ippoan.org`)
-から共有 API key 経由で呼ぶ。
+`egov-staging.ippoan.org` で公開する e-Gov 試験 API への薄い proxy。
+Nuxt app (`egov-check-staging.ippoan.org`) や browser から共有 API key 経由で呼ぶ。
 
-## なぜ別 worker か
+## 設計方針
 
-Nuxt nitro worker (`server/api/egov/*`) でも proxy はできるが、
-
-- `EGOV_REFRESH_TOKEN` を client-side バンドルに乗せたくない
-- access_token を全 Nuxt isolate / 全ユーザー横断で 1 つ cache したい
-  (毎リクエスト OAuth token endpoint を叩かない)
-- 認証経路と SDK ロジックの所有を Nuxt app から分離したい
-
-を満たすため独立 worker にする。
+- **refresh_token を worker に保持しない**。caller (Nuxt app / browser) が自分の
+  refresh_token を持ち、`POST /token` の `grant_type=refresh_token` で送って
+  くる pattern。worker は `client_secret` を inject して e-Gov に転送するだけ。
+  1 token 漏洩 = 全ユーザーなりすまし、を起こさない。
+- access_token cache も worker 側に持たない。caller がそれぞれ自分の token を
+  管理する (= per-user 帰属が明示的)。
+- 認証 / API ロジックを Nuxt app から分離し、`client_secret` が client bundle に
+  混入する経路を物理的に断つ。
 
 ## エンドポイント
 
-| Path        | 認証                          | 動作                                                   |
-| ----------- | ----------------------------- | ------------------------------------------------------ |
-| `GET /health` | なし                          | `{ ok: true }` を返す                                  |
-| `* /api/**` | `Authorization: Bearer <key>` | KV cache 済 access_token を付けて e-Gov v2 に proxy    |
+| Path | 認証 | 動作 |
+| ---- | ---- | ---- |
+| `GET /health` | なし | `{ ok: true }` を返す |
+| `POST /token` | `X-Worker-Api-Key` | `grant_type=authorization_code` / `refresh_token` を `client_secret` 付きで `e-Gov /auth/token` に転送 |
+| `* /api/**` | `X-Worker-Api-Key` | caller 提供の `Authorization: Bearer <access_token>` を `e-Gov /shinsei/v2` に透過 |
 
-`api/` 以降の path / query / body / `X-eGovAPI-Trial` ヘッダはそのまま透過する。
+`X-Worker-Api-Key` は Nuxt app と worker 間の共有 secret (`NUXT_EGOV_WORKER_API_KEY`)。
 
-## デプロイ前準備
+## 必要な Secrets Store entry
 
-```sh
-cd workers/egov
-npm install
+| binding | secret_name (CF Secrets Store) |
+| ------- | ------------------------------ |
+| `EGOV_CLIENT_SECRET` | `NUXT_EGOV_CLIENT_SECRET` |
+| `WORKER_API_KEY` | `NUXT_EGOV_WORKER_API_KEY` |
 
-# Secrets Store entry を作成 (secrets-inventory の secret-rotate-pipe skill を使うと
-# 値が LLM context に乗らない)。
-#   - EGOV_CLIENT_SECRET (`NUXT_EGOV_CLIENT_SECRET` と同値)
-#   - EGOV_REFRESH_TOKEN (e-Gov OAuth で発行した refresh_token)
-#   - EGOV_WORKER_API_KEY (Nuxt app との共有 secret; ランダム生成)
-```
-
-access_token cache は worker isolate の module-level 変数で保持する。
-isolate が落ちたら次回 request で 1 度だけ refresh が走るだけなので、
-KV / Durable Object を挟む必要は無い (e-Gov access_token は 1h 寿命)。
+いずれも Nuxt app と共用既存 entry を再利用。
 
 ## ローカル動作確認
 
 ```sh
+cd workers/egov
+npm install
 npm run dev
-# 別 shell で
 curl http://127.0.0.1:8787/health
 ```
 
 ## デプロイ
 
 CI (`.github/workflows/egov-worker-ci.yml`) が PR で staging deploy、tag push
-で release deploy を走らせる。ローカルから手で出す場合:
-
-```sh
-npm run deploy
-```
+で release deploy を走らせる。手動の場合 `npm run deploy`。

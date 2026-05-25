@@ -9,7 +9,7 @@ account_id = "24b45709d060d957340180e995f0d373"
 # e-Gov 試験 API endpoint (公開情報 — ハードコード)。
 EGOV_AUTH_BASE = "https://account2.sbx.e-gov.go.jp/auth"
 EGOV_API_BASE = "https://api2.sbx.e-gov.go.jp/shinsei/v2"
-# Nuxt app と同じ Software ID。client_secret / refresh_token は Secrets Store。
+# Nuxt app と同じ Software ID。client_secret は Secrets Store。
 EGOV_CLIENT_ID = "K26XGOmbDusxfKsp"
 
 [observability]
@@ -21,23 +21,21 @@ head_sampling_rate = 1
 pattern = "egov-staging.ippoan.org"
 custom_domain = true
 
-# Access token cache は worker isolate の module-level 変数で持つ
-# (e-Gov の 1h token 寿命なら KV を挟むほどの恩恵が無い)。
-
 # 共有 secrets store。auth-worker / ref-files-worker と同じ account-level store。
-# 値は secrets-inventory 経由で投入する (secret-rotate-pipe skill)。
+# secret_name は Nuxt app と共用 (NUXT_ prefix 付き既存 entry を再利用)。
+# binding 名は worker 内で参照する env var 名。
+#
+# **EGOV_REFRESH_TOKEN は意図的に持たない** — caller (Nuxt app / browser) が
+# 自分の refresh_token を /token endpoint の grant_type=refresh_token で送ってきて、
+# 本 worker は client_secret だけ inject して e-Gov に転送する pattern。
+# refresh_token を backend で集中保持しないことで、1 token 漏洩 = 全ユーザー
+# なりすましの事故を防ぐ。
 [[secrets_store_secrets]]
 binding = "EGOV_CLIENT_SECRET"
 store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
-secret_name = "EGOV_CLIENT_SECRET"
+secret_name = "NUXT_EGOV_CLIENT_SECRET"
 
-[[secrets_store_secrets]]
-binding = "EGOV_REFRESH_TOKEN"
-store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
-secret_name = "EGOV_REFRESH_TOKEN"
-
-# Nuxt app ↔ worker 間の共有 API key。`Authorization: Bearer <key>` で proxy を gate。
 [[secrets_store_secrets]]
 binding = "WORKER_API_KEY"
 store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
-secret_name = "EGOV_WORKER_API_KEY"
+secret_name = "NUXT_EGOV_WORKER_API_KEY"

@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker, { type Env } from '../src/index';
-import { _resetTokenCache } from '../src/token-cache';
 
 function makeSecret(value: string): SecretsStoreSecret {
   return { get: async () => value } as unknown as SecretsStoreSecret;
@@ -12,7 +11,6 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
     EGOV_API_BASE: 'https://api.test/v2',
     EGOV_CLIENT_ID: 'client-id',
     EGOV_CLIENT_SECRET: makeSecret('client-secret'),
-    EGOV_REFRESH_TOKEN: makeSecret('refresh-token'),
     WORKER_API_KEY: makeSecret('test-api-key'),
     ...overrides,
   };
@@ -23,81 +21,161 @@ const originalFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = originalFetch;
   vi.restoreAllMocks();
-  _resetTokenCache();
 });
 
 describe('GET /health', () => {
-  it('returns 200 ok', async () => {
+  it('returns 200 ok without api key', async () => {
     const res = await worker.fetch(new Request('https://w/health'), makeEnv());
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
   });
 });
 
-describe('unknown route', () => {
-  it('returns 404', async () => {
-    const res = await worker.fetch(new Request('https://w/nope'), makeEnv());
-    expect(res.status).toBe(404);
-  });
-});
-
-describe('/api/* auth', () => {
-  it('rejects missing Authorization', async () => {
-    const res = await worker.fetch(new Request('https://w/api/procedures/1'), makeEnv());
-    expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: 'missing_authorization' });
-  });
-
-  it('rejects wrong api key', async () => {
+describe('api key gate', () => {
+  it('/token rejects missing api key', async () => {
     const res = await worker.fetch(
-      new Request('https://w/api/procedures/1', { headers: { authorization: 'Bearer wrong' } }),
+      new Request('https://w/token', { method: 'POST', body: '{}' }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: 'missing_x_worker_api_key' });
+  });
+
+  it('/api rejects wrong api key', async () => {
+    const res = await worker.fetch(
+      new Request('https://w/api/procedures/1', { headers: { 'x-worker-api-key': 'wrong' } }),
       makeEnv(),
     );
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ error: 'invalid_api_key' });
   });
+
+  it('unknown path with valid key returns 404', async () => {
+    const res = await worker.fetch(
+      new Request('https://w/nope', { headers: { 'x-worker-api-key': 'test-api-key' } }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(404);
+  });
 });
 
-describe('/api/* proxy', () => {
+describe('POST /token', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
   beforeEach(() => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       if (url === 'https://auth.test/token') {
         return new Response(
-          JSON.stringify({ access_token: 'access-xyz', expires_in: 3600, token_type: 'Bearer', refresh_token: 'r' }),
+          JSON.stringify({
+            access_token: 'access-xyz',
+            refresh_token: 'refresh-abc',
+            expires_in: 3600,
+            token_type: 'Bearer',
+            received: init?.body,
+            received_auth: (init?.headers as Record<string, string>)?.['Authorization'],
+          }),
           { status: 200, headers: { 'content-type': 'application/json' } },
         );
-      }
-      if (url.startsWith('https://api.test/v2/')) {
-        return new Response(JSON.stringify({ proxied: true, url }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
       }
       throw new Error(`unexpected fetch: ${url}`);
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
   });
 
-  it('refreshes token then proxies request', async () => {
-    const env = makeEnv();
+  it('rejects non-POST', async () => {
     const res = await worker.fetch(
-      new Request('https://w/api/procedures/123?foo=bar', { headers: { authorization: 'Bearer test-api-key' } }),
-      env,
+      new Request('https://w/token', { headers: { 'x-worker-api-key': 'test-api-key' } }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(405);
+  });
+
+  it('rejects unsupported grant_type', async () => {
+    const res = await worker.fetch(
+      new Request('https://w/token', {
+        method: 'POST',
+        headers: { 'x-worker-api-key': 'test-api-key', 'content-type': 'application/json' },
+        body: JSON.stringify({ grant_type: 'password' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'unsupported_grant_type' });
+  });
+
+  it('exchanges authorization_code with injected client_secret', async () => {
+    const res = await worker.fetch(
+      new Request('https://w/token', {
+        method: 'POST',
+        headers: { 'x-worker-api-key': 'test-api-key', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          grant_type: 'authorization_code',
+          code: 'auth-code-1',
+          redirect_uri: 'https://app/cb',
+          code_verifier: 'v',
+        }),
+      }),
+      makeEnv(),
     );
     expect(res.status).toBe(200);
-    const body = await res.json() as { proxied: boolean; url: string };
+    const body = await res.json() as { received: string; received_auth: string; access_token: string };
+    expect(body.access_token).toBe('access-xyz');
+    expect(body.received).toContain('grant_type=authorization_code');
+    expect(body.received).toContain('code=auth-code-1');
+    expect(body.received).toContain('code_verifier=v');
+    // client-id:client-secret = "client-id:client-secret" を base64 した値。
+    expect(body.received_auth).toBe(`Basic ${btoa('client-id:client-secret')}`);
+  });
+
+  it('refreshes via refresh_token grant', async () => {
+    const res = await worker.fetch(
+      new Request('https://w/token', {
+        method: 'POST',
+        headers: { 'x-worker-api-key': 'test-api-key', 'content-type': 'application/json' },
+        body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: 'rt-1' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json() as { received: string };
+    expect(body.received).toContain('grant_type=refresh_token');
+    expect(body.received).toContain('refresh_token=rt-1');
+  });
+});
+
+describe('/api/* proxy', () => {
+  beforeEach(() => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.startsWith('https://api.test/v2/')) {
+        return new Response(
+          JSON.stringify({
+            proxied: true,
+            url,
+            forwarded_auth: (init?.headers as Headers)?.get?.('Authorization'),
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as unknown as typeof fetch;
+  });
+
+  it('forwards caller Authorization to e-Gov', async () => {
+    const res = await worker.fetch(
+      new Request('https://w/api/procedures/123?foo=bar', {
+        headers: {
+          'x-worker-api-key': 'test-api-key',
+          'authorization': 'Bearer caller-token',
+        },
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json() as { proxied: boolean; url: string; forwarded_auth: string };
     expect(body.proxied).toBe(true);
     expect(body.url).toBe('https://api.test/v2/procedures/123?foo=bar');
-
-    // 2 回目は module-level cache hit で token endpoint を叩かない。
-    const fetchSpy = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
-    fetchSpy.mockClear();
-    await worker.fetch(
-      new Request('https://w/api/procedures/123', { headers: { authorization: 'Bearer test-api-key' } }),
-      env,
-    );
-    const calls = fetchSpy.mock.calls.map((c) => (typeof c[0] === 'string' ? c[0] : (c[0] as URL).toString()));
-    expect(calls.some((u) => u === 'https://auth.test/token')).toBe(false);
+    expect(body.forwarded_auth).toBe('Bearer caller-token');
   });
 });
