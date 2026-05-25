@@ -38,4 +38,4 @@ secret_name = "NUXT_EGOV_CLIENT_SECRET"
 [[secrets_store_secrets]]
 binding = "WORKER_API_KEY"
 store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
-secret_name = "NUXT_EGOV_WORKER_API_KEY"
+secret_name = "NUXT_EGOV_API_KEY"
