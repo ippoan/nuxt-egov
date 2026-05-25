@@ -42,6 +42,8 @@ jobs:
       # secret-verify は repo root の `wrangler.jsonc` (Nuxt app 用) を
       # autodetect してしまうため、明示的に worker 側に向ける。
       gcp_secret_verify_wrangler_path: 'workers/egov/wrangler.toml'
-      deploy_staging_script: 'npx wrangler deploy'
-      deploy_release_script: 'npx wrangler deploy'
+      # wrangler 3 が root の `wrangler.jsonc` (Nuxt app 用) を autodetect して
+      # しまわないように、明示的に worker 側 config を渡す。
+      deploy_staging_script: 'npx wrangler deploy --config wrangler.toml'
+      deploy_release_script: 'npx wrangler deploy --config wrangler.toml'
     secrets: inherit
