@@ -39,6 +39,9 @@ jobs:
       typecheck_command: 'npx tsc --noEmit'
       has_tests: true
       npm_scope: '@ippoan'
+      # secret-verify は repo root の `wrangler.jsonc` (Nuxt app 用) を
+      # autodetect してしまうため、明示的に worker 側に向ける。
+      gcp_secret_verify_wrangler_path: 'workers/egov/wrangler.toml'
       deploy_staging_script: 'npx wrangler deploy'
       deploy_release_script: 'npx wrangler deploy'
     secrets: inherit
