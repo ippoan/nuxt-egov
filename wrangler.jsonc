@@ -7,6 +7,13 @@
   "assets": {
     "directory": ".output/public"
   },
+  // frontend-ci.yml の secret-verify job が secret backup の auditability の
+  // ため明示宣言を要求する。NUXT_EGOV_CLIENT_SECRET は wrangler secret で
+  // 個別管理しており GCP Secret Manager backup audit の対象外とするため、
+  // 他 CF worker repo (nuxt-notify / nuxt-trouble) に揃えて [] を宣言する。
+  "secrets": {
+    "required": []
+  },
   "vars": {
     "NUXT_PUBLIC_EGOV_CLIENT_ID": "K26XGOmbDusxfKsp",
     "NUXT_PUBLIC_EGOV_REDIRECT_URI": "https://egov-check.ippoan.org/callback",
