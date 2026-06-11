@@ -27,7 +27,8 @@ logs
 spec/
 
 # Claude Code
-.claude/
+.claude/*
+!.claude/skills/
 
 # Downloaded schema files
 kousei_schema/
