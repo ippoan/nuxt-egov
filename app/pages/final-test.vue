@@ -609,8 +609,10 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
         applyXml = applyXml.replace(/<月(\s[^>]*)?\/>(?!<\/)/g, (m, a) => `<月${a || ''}>${now.getMonth() + 1}</月>`)
         applyXml = applyXml.replace(/<日(\s[^>]*)?>(\s*)<\/日>/g, (m, a) => `<日${a || ''}>${now.getDate()}</日>`)
         applyXml = applyXml.replace(/<日(\s[^>]*)?\/>(?!<\/)/g, (m, a) => `<日${a || ''}>${now.getDate()}</日>`)
-        // 在留期間は非必須だが年月日が入ると日付チェックされる → 西暦4桁に修正
-        applyXml = applyXml.replace(/<在留期間>([\s\S]*?)<\/在留期間>/g, (m) => m.replace(/<年([^>]*)>8<\/年>/, `<年$1>${now.getFullYear()}</年>`))
+        // 在留期間は日付チェック (年 moreThan=1900) があるため 年 を西暦4桁にする。skeleton
+        // プリセットが '2' (令和2想定) の場合もあるので現値に依らず置換する (年=2 だと
+        // 「1900未満で小さい」「正しい日付でない」になる。Refs #101)。
+        applyXml = applyXml.replace(/<在留期間>([\s\S]*?)<\/在留期間>/g, (m) => m.replace(/(<年[^>]*>)[^<]*(<\/年>)/, `$1${now.getFullYear()}$2`))
         // カタカナ必須 element (specifiedLetter が全角カタカナ集合) を収集。fallback で名前に「カナ」を
         // 含まない katakana フィールド (被保険者氏名/離職者氏名_フリガナ 等) にも全角カタカナを入れる。Refs #101
         const kanaSet = new Set<string>()
