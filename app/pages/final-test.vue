@@ -80,6 +80,13 @@ function buildTestValuesFromCheck(checkXml: string): Record<string, string> {
     const required = item.querySelector('omitDisabled') !== null
     if (!required) return // 必須フィールドのみ
 
+    // 値の KEY は申請書XMLの**実要素名** (xpath 末尾、添字 [n] を除去) を使う。
+    // errtag (例「配偶者の氏名（1ページ目）」) は人間向けラベルで実要素名 (例「P1_配偶者の氏名」)
+    // と異なり、errtag を key にすると後段の置換が実タグにヒットせず必須が空のまま残る (Refs #101)。
+    // 値の選定パターンは従来どおり errtag (t/fullTag) ベースで決める (挙動を変えない)。
+    const xpath = item.querySelector('xpath')?.textContent
+    const elem = xpath ? (xpath.split('/').pop() ?? tag).replace(/\[\d+\]$/, '') : tag
+
     const isNum = item.querySelector('numerical') !== null
     const isFullWidth = item.querySelector('fullAllChar') !== null
     const maxLenEl = item.querySelector('char > range > number')
@@ -93,64 +100,64 @@ function buildTestValuesFromCheck(checkXml: string): Record<string, string> {
     const fullTag = tag.toLowerCase()
     const t = lastSeg.toLowerCase()
     if (t.includes('年号')) {
-      values[tag] = '令和'
+      values[elem] = '令和'
     } else if (t.includes('年') && !t.includes('氏名') && !t.includes('名称')) {
       // intDigit>=4 は西暦（在留期間等）、それ以外は和暦
-      values[tag] = intDigit >= 4 ? String(now.getFullYear()) : '8'
+      values[elem] = intDigit >= 4 ? String(now.getFullYear()) : '8'
     } else if (t.includes('月') && !t.includes('氏名') && !t.includes('名称')) {
-      values[tag] = String(now.getMonth() + 1)
+      values[elem] = String(now.getMonth() + 1)
     } else if (t.includes('日') && !t.includes('氏名') && !t.includes('名称')) {
-      values[tag] = String(now.getDate())
+      values[elem] = String(now.getDate())
     } else if (t.includes('配達局番号')) {
-      values[tag] = '100'
+      values[elem] = '100'
     } else if (t.includes('町域番号')) {
-      values[tag] = '0014'
+      values[elem] = '0014'
     } else if (t.includes('郵便番号') && t.includes('親')) {
-      values[tag] = '100'
+      values[elem] = '100'
     } else if (t.includes('郵便番号') && t.includes('子')) {
-      values[tag] = '0014'
+      values[elem] = '0014'
     } else if (t.includes('市外局番')) {
-      values[tag] = '03'
+      values[elem] = '03'
     } else if (t.includes('市内局番')) {
-      values[tag] = '1234'
+      values[elem] = '1234'
     } else if (t.includes('加入者番号')) {
-      values[tag] = '5678'
+      values[elem] = '5678'
     } else if ((t.includes('フリガナ') || t.includes('カナ')) && (fullTag.includes('氏名') || t.includes('氏名'))) {
-      values[tag] = 'テストタロウ'
+      values[elem] = 'テストタロウ'
     } else if (t.includes('カナ') || t.includes('フリガナ')) {
-      values[tag] = 'テストジギョウショ'
+      values[elem] = 'テストジギョウショ'
     } else if ((t.includes('所在地') || t.includes('住所')) && !t.includes('フリガナ') && !t.includes('カナ')) {
-      values[tag] = '東京都千代田区永田町'
+      values[elem] = '東京都千代田区永田町'
     } else if (t.includes('あて先') || t.includes('宛先')) {
-      values[tag] = 'テスト宛先'
+      values[elem] = 'テスト宛先'
     } else if (t.includes('概要')) {
-      values[tag] = 'テスト事業'
+      values[elem] = 'テスト事業'
     } else if (t.includes('種類') || t.includes('業種')) {
-      values[tag] = 'その他'
+      values[elem] = 'その他'
     } else if (t.includes('名称') || t.includes('事業所名') || t.includes('事業の名称')) {
-      values[tag] = 'テスト事業所'
+      values[elem] = 'テスト事業所'
     } else if (t.includes('氏名')) {
-      values[tag] = 'テスト太郎'
+      values[elem] = 'テスト太郎'
     } else if (t.includes('チェックボックス') || t.includes('チェック')) {
-      values[tag] = '1'
+      values[elem] = '1'
     } else if (t.includes('記号')) {
-      values[tag] = isNum ? '1' : 'ア'
+      values[elem] = isNum ? '1' : 'ア'
     } else if ((t.includes('賃金') || t.includes('金額') || t.includes('見込額')) && !t.includes('日')) {
-      values[tag] = maxLen >= 6 ? '100000' : '1'.repeat(Math.min(maxLen, 5))
+      values[elem] = maxLen >= 6 ? '100000' : '1'.repeat(Math.min(maxLen, 5))
     } else if (t.includes('番号') && maxLenEl && isEqual) {
-      values[tag] = '1'.repeat(maxLen)
+      values[elem] = '1'.repeat(maxLen)
     } else if (t.includes('番号') && isNum) {
-      values[tag] = '1'.padStart(intDigit || 1, '0').substring(0, intDigit || 5)
+      values[elem] = '1'.padStart(intDigit || 1, '0').substring(0, intDigit || 5)
     } else if (t.includes('番号')) {
-      values[tag] = '0001'
+      values[elem] = '0001'
     } else if (t.includes('件数') || t.includes('人数')) {
-      values[tag] = '0'
+      values[elem] = '0'
     } else if (isNum) {
-      values[tag] = '1'
+      values[elem] = '1'
     } else if (isFullWidth) {
-      values[tag] = 'テスト'
+      values[elem] = 'テスト'
     } else {
-      values[tag] = 'test'
+      values[elem] = 'test'
     }
 
     // 文字数制約 (check.xml の char > range > number) を最終強制する。
@@ -161,15 +168,15 @@ function buildTestValuesFromCheck(checkXml: string): Record<string, string> {
     //   - equal  : 丁度 maxLen 文字 (不足は埋め、超過は切り詰め)
     //   - within : maxLen を超えていたら切り詰め (短い分は許容)
     // 数値系 (isNum) は intDigit 等で別管理しているのでここでは触らない。
-    if (maxLenEl && !isNum && typeof values[tag] === 'string') {
-      const v = values[tag]
+    if (maxLenEl && !isNum && typeof values[elem] === 'string') {
+      const v = values[elem]
       const pad = (isFullWidth ? 'ア' : (v[0] || 'X'))
       if (isEqual) {
-        values[tag] = v.length === maxLen
+        values[elem] = v.length === maxLen
           ? v
           : (v.length > maxLen ? v.slice(0, maxLen) : v + pad.repeat(maxLen - v.length))
       } else if (v.length > maxLen) {
-        values[tag] = v.slice(0, maxLen)
+        values[elem] = v.slice(0, maxLen)
       }
     }
   })
@@ -547,6 +554,16 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
           if (content.trim()) return m // 既に値がある
           const t = tag.toLowerCase()
           let val = ''
+          // 日付成分 (…x年月日x年/月/日/元号) を 氏名/名称 より先に数値で埋める。
+          // 要素名に「氏名」等を含む日付フィールド (例「氏名変更x訂正x年月日x年」) が
+          // 下の 氏名 分岐で "テスト太郎" になり「数字以外/半角でない」になるのを防ぐ (Refs #101)。
+          if (t.includes('年月日')) {
+            if (tag.endsWith('元号') || tag.endsWith('年号')) val = '令和'
+            else if (tag.endsWith('年')) val = '8'
+            else if (tag.endsWith('月')) val = String(now.getMonth() + 1)
+            else if (tag.endsWith('日')) val = String(now.getDate())
+          }
+          if (val) { fallbackCount++; return `<${tag}${attrs || ''}>${val}</${tag}>` }
           if (t.includes('scriptcheck')) val = '1'
           else if (t.includes('配達局番号')) val = '100'
           else if (t.includes('町域番号')) val = '0014'
