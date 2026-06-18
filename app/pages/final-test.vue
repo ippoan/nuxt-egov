@@ -19,6 +19,18 @@ function testPdfBytes(): Uint8Array {
   return arr
 }
 
+// 構成情報ファイル (WriteAppli / SignAttach) の 申請者情報 / 連絡先情報 に含まれる
+// 個人情報フィールドを空タグに戻す。6/18 e-Gov 回答により、構成情報ファイルには
+// 氏名〜電子メールアドレス を設定せず空タグにする必要がある (個人情報は構成管理
+// 情報ファイル kousei.xml 側にのみ設定する)。
+const APPLICANT_PERSONAL_TAGS = ['氏名フリガナ', '氏名', '郵便番号', '住所フリガナ', '住所', '電話番号', '電子メールアドレス', '法人名'] as const
+function emptyApplicantTags(xml: string): string {
+  for (const tag of APPLICANT_PERSONAL_TAGS) {
+    xml = xml.replace(new RegExp(`<${tag}>[^<]*</${tag}>`, 'g'), `<${tag}/>`)
+  }
+  return xml
+}
+
 const useGbizId = ref(false)
 const enableSign = ref(true)
 const pfxPassword = ref('gpkitest')
@@ -273,6 +285,16 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
       // configFiles[1] = SignAttach構成情報 (スケルトン 様式ID=001のまま、添付書類署名)
       // configFiles[2] = WriteAppli構成情報 (スケルトン 様式ID=009のまま、申請書作成)
 
+      // 構成情報ファイル (WriteAppli / SignAttach) の <手続ID> は、構成管理情報の
+      // 手続識別子 (proc_id, 末尾 "000") とは別物。6/18 e-Gov 回答により末尾を
+      //   申請書 (WriteAppli)   → "F01"
+      //   添付書類 (SignAttach) → "T01"
+      // に置換した値を使う (例: 950A101220029000 → 950A101220029F01 / ...T01)。
+      // 全個別署名手続 (No.23〜49) は proc_id が "000" 終わりで共通。
+      const baseProcId = proc.proc_id.slice(0, -3)
+      const writeAppliProcId = `${baseProcId}F01`
+      const signAttachProcId = `${baseProcId}T01`
+
       // --- configFiles[0]: メイン kousei.xml ---
       const mainPath = `${proc.proc_id}/${configFiles[0]}`
       const mainFile = zip.file(mainPath)
@@ -309,9 +331,10 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
         let xml = await signAttachFile.async('string')
         console.log(`[${proc.proc_id}] SignAttach (before):`, xml.substring(0, 3000))
         // 最小限のフィールドのみ: 受付行政機関ID, 手続ID, 手続名称, 申請種別
+        // 手続ID は添付書類側の "T01" サフィックス版を使う (6/18 e-Gov 回答)
         const signAttachValues: Record<string, string> = {
           受付行政機関ID: '100' + proc.proc_id.substring(0, 3),
-          手続ID: proc.proc_id,
+          手続ID: signAttachProcId,
           手続名称: proc.name,
           申請種別: '添付書類署名',
         }
@@ -319,6 +342,9 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
           xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
           xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
         }
+        // 申請者情報 / 連絡先情報 (氏名〜電子メールアドレス) は空タグにする
+        // (6/18 e-Gov 回答: 構成情報ファイルには個人情報を設定しない)
+        xml = emptyApplicantTags(xml)
         // 添付書類属性情報: e-Gov 5/7 正解サンプル準拠 — Test.pdf 1 件のみ
         if (!xml.includes('<添付書類属性情報>')) {
           const attachBlock = `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名ファイル１</添付書類名称><添付書類ファイル名称>Test.pdf</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
@@ -337,9 +363,10 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
         let xml = await writeAppliFile.async('string')
         console.log(`[${proc.proc_id}] WriteAppli (before):`, xml.substring(0, 3000))
         // 最小限のフィールドのみ: 受付行政機関ID, 手続ID, 手続名称, 申請種別
+        // 手続ID は申請書側の "F01" サフィックス版を使う (6/18 e-Gov 回答)
         const writeAppliValues: Record<string, string> = {
           受付行政機関ID: '100' + proc.proc_id.substring(0, 3),
-          手続ID: proc.proc_id,
+          手続ID: writeAppliProcId,
           手続名称: proc.name,
           申請種別: '申請書作成',
         }
@@ -347,6 +374,9 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
           xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
           xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
         }
+        // 申請者情報 / 連絡先情報 (氏名〜電子メールアドレス) は空タグにする
+        // (6/18 e-Gov 回答: 構成情報ファイルには個人情報を設定しない)
+        xml = emptyApplicantTags(xml)
         // WriteAppli (申請書作成) — e-Gov 5/7 正解サンプル + 仕様書 (beshi_kyoutsudata_kousei.json 項番 48, 119) 準拠:
         // - <添付書類属性情報>: 設定しない (申請書に対する構成情報では不要)
         // - <申請書属性情報>: 設定する (form_id/version/name/apply_file_name)

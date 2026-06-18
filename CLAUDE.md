@@ -57,6 +57,25 @@ e-Gov 電子申請サービスのチェックツール。Nuxt 4 + Cloudflare Wor
 - 参考: SmartHR kiji（旧API OSS）https://github.com/kufu/kiji — 標準形式のみ実装、個別署名は未実装
 - 参考: Qiita https://qiita.com/itaruMatumoto/items/a4a4d74b5a1ff9ea0b8b
 
+#### 構成情報ファイルの `<手続ID>` と個人情報（6/18 e-Gov 回答で確定）
+
+個別署名形式の構成情報ファイル（WriteAppli / SignAttach）の `<手続ID>` は、構成管理情報
+（kousei.xml）の手続識別子 `proc_id`（末尾 `000`）**そのままではエラー**になる。末尾 `000` を
+以下に置換した値を使う:
+
+| 構成情報 | 申請種別 | `<手続ID>` 末尾 | 例（proc_id=`950A101220029000`） |
+|---|---|---|---|
+| WriteAppli | 申請書作成 | `F01` | `950A101220029F01` |
+| SignAttach | 添付書類署名 | `T01` | `950A101220029T01` |
+
+- 全個別署名手続（No.23〜49）は `proc_id` が `000` 終わりで共通 → `proc_id.slice(0, -3)` + `F01/T01`
+- 構成情報ファイルの `<申請者情報>` / `<連絡先情報>`（氏名〜電子メールアドレス）は**空タグにする**
+  （個人情報は構成管理情報 kousei.xml 側にのみ設定）。`final-test.vue` の `emptyApplicantTags()` で除去。
+- 構成管理情報（kousei.xml）側の `<手続ID>` は `proc_id` のまま（置換しない）。
+- **zip はフォルダ階層必須**: `xxxxx.zip / {proc_id}（フォルダ）/ 各ファイル`。アプリの API 送信は
+  スケルトン zip のフォルダ構造をそのまま引き継ぐので OK。e-Gov へ手動でメール添付する際は
+  フォルダで括ること（フォルダ無し直置きは不可）。
+
 ### 申請書XML
 - スケルトンZIP内の `{form_id}check.xml` から必須フィールド・型を解析
 - `buildTestValuesFromCheck()` でタグ名パターンマッチにより自動テスト値生成
