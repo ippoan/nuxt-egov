@@ -19,6 +19,10 @@ jobs:
     with:
       project_type: 'nuxt'
       install_command: 'npm install'
+      # SDK を dev dist-tag 追従にするため package-lock.json は commit しない
+      # (commit すると npm install が dist-tag を再解決せず古い版に固定される)。
+      # setup-node の npm cache key は lockfile 不在でも package.json で算出する。
+      cache_dependency_path: 'package.json'
       has_tests: false
       has_deploy: true
       npm_scope: '@ippoan'

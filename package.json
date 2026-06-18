@@ -10,7 +10,7 @@
     "postinstall": "nuxt prepare"
   },
   "dependencies": {
-    "@ippoan/egov-shinsei-sdk": "^0.1.0",
+    "@ippoan/egov-shinsei-sdk": "dev",
     "jszip": "^3.10.1",
     "node-forge": "^1.4.0",
     "nuxt": "^3.21.2",

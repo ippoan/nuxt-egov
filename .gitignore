@@ -33,3 +33,7 @@ spec/
 # Downloaded schema files
 kousei_schema/
 .wrangler/
+
+# dev dist-tag 追従のため lockfile は commit しない (commit すると npm install が
+# dist-tag を再解決せず古い版に固定される — ippoan/egov-shinsei-sdk#29 で実害)
+package-lock.json
