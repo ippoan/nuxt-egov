@@ -152,6 +152,26 @@ function buildTestValuesFromCheck(checkXml: string): Record<string, string> {
     } else {
       values[tag] = 'test'
     }
+
+    // 文字数制約 (check.xml の char > range > number) を最終強制する。
+    // e-Gov は文字種チェックの前に「入力可能な文字数」を厳密に見るため、上の
+    // パターンマッチが生成した値の長さが制約に合わないと「入力可能な文字数で
+    // 入力されていません」で弾かれる (例: 事業所整理記号x郡市区記号 は equal=2 だが
+    // 記号分岐が 'ア' 1 文字を入れていた)。
+    //   - equal  : 丁度 maxLen 文字 (不足は埋め、超過は切り詰め)
+    //   - within : maxLen を超えていたら切り詰め (短い分は許容)
+    // 数値系 (isNum) は intDigit 等で別管理しているのでここでは触らない。
+    if (maxLenEl && !isNum && typeof values[tag] === 'string') {
+      const v = values[tag]
+      const pad = (isFullWidth ? 'ア' : (v[0] || 'X'))
+      if (isEqual) {
+        values[tag] = v.length === maxLen
+          ? v
+          : (v.length > maxLen ? v.slice(0, maxLen) : v + pad.repeat(maxLen - v.length))
+      } else if (v.length > maxLen) {
+        values[tag] = v.slice(0, maxLen)
+      }
+    }
   })
 
   return values
