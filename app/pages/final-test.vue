@@ -596,6 +596,40 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
         })
         // 賃金関連フィールド: 桁数制限（maxLen不明だが6桁超はエラーなので1桁に）
         applyXml = applyXml.replace(/<(賃金締切日|賃金支払日当翌|賃金支払日)>(\d{4,})<\/\1>/g, '<$1>1</$1>')
+        // 文字数制約の最終強制: check.xml の char>range を element 単位で集約し、値長が制約に
+        // 反する field のみ補正する。skeleton プリセットや別 checkItem 由来で '0001' のような
+        // 不正長が同名 element に global 充填され「入力可能な文字数で入力されていません」になるのを
+        // 是正する (例: 労働保険番号の府県=eq2/基幹番号=eq6 に len4 の値)。適合済みの値は変えない。Refs #101
+        const lenDoc = new DOMParser().parseFromString(checkXml, 'text/xml')
+        const lenMap = new Map<string, { len: number; equal: boolean; num: boolean }>()
+        for (const it of Array.from(lenDoc.querySelectorAll('checkItem'))) {
+          const numEl = it.querySelector('char > range > number')
+          if (!numEl) continue
+          const xp = it.querySelector('xpath')?.textContent || ''
+          const el = (xp.split('/').pop() || '').replace(/\[\d+\]$/, '')
+          if (!el) continue
+          const len = Number(numEl.textContent)
+          const equal = it.querySelector('char > range > equal') !== null
+          const num = it.querySelector('numerical') !== null
+          const prev = lenMap.get(el)
+          if (!prev || (equal && !prev.equal)) lenMap.set(el, { len, equal, num }) // equal を優先
+        }
+        for (const [el, c] of lenMap) {
+          applyXml = applyXml.replace(new RegExp(`<${el}(\\s[^>]*)?>([^<]*)</${el}>`, 'g'), (m, attrs: string, val: string) => {
+            if (!val) return m // 空は必須チェックの管轄
+            const curLen = [...val].length
+            if (c.equal ? curLen === c.len : curLen <= c.len) return m // 既に適合
+            let fixed: string
+            if (c.num || /^[0-9]+$/.test(val)) {
+              const digits = val.replace(/\D/g, '') || '0'
+              fixed = c.equal ? digits.padEnd(c.len, '0').slice(0, c.len) : digits.slice(0, c.len)
+            } else {
+              const pad = val[0] || 'X'
+              fixed = c.equal ? (curLen > c.len ? [...val].slice(0, c.len).join('') : val + pad.repeat(c.len - curLen)) : [...val].slice(0, c.len).join('')
+            }
+            return `<${el}${attrs || ''}>${fixed}</${el}>`
+          })
+        }
         console.log(`[${proc.proc_id}] apply filled ${Object.keys(testValues).length} fields + ${fallbackCount} fallback`)
         zip.file(applyPath, applyXml)
       }
