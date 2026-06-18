@@ -3,7 +3,7 @@ const BUILD_TIME = '20260415-0430'
 import { EgovApiError } from '@ippoan/egov-shinsei-sdk'
 import type { EgovClient } from '@ippoan/egov-shinsei-sdk'
 import JSZip from 'jszip'
-import { TEST_PROCEDURES, PROCS_WITH_DESTINATION, PROCS_WITH_ATTACHMENT, type TestProcedure } from '~/utils/finalTestProcedures'
+import { TEST_PROCEDURES, PROCS_WITH_DESTINATION, PROCS_WITH_ATTACHMENT, PROCS_WITH_PAYMENT, type TestProcedure } from '~/utils/finalTestProcedures'
 
 const { isAuthenticated, startLogin, logout, apiFetch, getClient } = useEgovAuth()
 const { pfxLoaded, certSubject, extraPfxCount, loadPfx, loadTestPfx, loadExtraPfx, signKouseiXml, signConfigXml } = useXmlSign()
@@ -345,6 +345,12 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
         for (const [tag, value] of Object.entries(kouseiTestValues)) {
           xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
           xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
+        }
+        // 納付方法が必要な手続: 標準形式分岐と同じ <納付関連情報> を個別署名 main kousei.xml にも挿入。
+        // (複数様式パスで漏れていた。950A102200046/047, 950A102810040/053, 900A102800072000)
+        // 900A102800072000 は expected_state が '手数料納付' ではないため PROCS_WITH_PAYMENT で明示判定する。
+        if (PROCS_WITH_PAYMENT.has(proc.proc_id) && !xml.includes('<納付関連情報>')) {
+          xml = xml.replace('<法人番号>', '<納付関連情報><納付方法>1</納付方法><振込者氏名カナ>テストタロウ</振込者氏名カナ></納付関連情報>\n\t\t\t\t\t<法人番号>')
         }
         // 添付書類属性情報 — 5/7 e-Gov 正解サンプル (950A101220029000) 準拠の順序を様式数分くり返す:
         //   様式ごとに [WriteAppli構成情報 → 申請書本体] を列挙 → 最後に [SignAttach構成情報 → Test.pdf]

@@ -41,6 +41,20 @@ export const PROCS_WITH_ATTACHMENT = new Map<string, string[]>([
   ['950A102810037000', ['添付ファイル１']],
 ])
 
+/**
+ * 構成管理情報 (kousei.xml) に `<納付関連情報>` (納付方法) が必須の手続。
+ *
+ * 標準形式は `expected_state` に '手数料納付' を含むかで判定できるが、個別署名形式は
+ * 実機エラー「納付方法を…」の逆引きで把握する。特に `900A102800072000` は
+ * `expected_state` が 'プレ印字データが取得可能な状態' で heuristic に乗らないが
+ * 納付方法を要求するため、明示リストで管理する (e-Gov 実機エラー由来)。
+ */
+export const PROCS_WITH_PAYMENT = new Set([
+  '950A102200046000', '950A102200047000',
+  '950A102810040000', '950A102810053000',
+  '900A102800072000',
+])
+
 export const TEST_PROCEDURES: TestProcedure[] = [
   // 標準形式 (22件)
   { no: 1, proc_id: '950A010002010000', name: 'ＡＰＩテスト用手続（社会保険関係手続）（通）１００７／ＡＰＩテスト用手続（社会保険関係手続）（通）１００７', format: 'standard', expected_state: '公文書の取得が可能な状態', expected_status: '審査終了', note: '公文書（署名あり）1件', signatureRequired: true },
