@@ -3,7 +3,7 @@ const BUILD_TIME = '20260415-0430'
 import { EgovApiError } from '@ippoan/egov-shinsei-sdk'
 import type { EgovClient } from '@ippoan/egov-shinsei-sdk'
 import JSZip from 'jszip'
-import { TEST_PROCEDURES, PROCS_WITH_DESTINATION, type TestProcedure } from '~/utils/finalTestProcedures'
+import { TEST_PROCEDURES, PROCS_WITH_DESTINATION, PROCS_WITH_ATTACHMENT, type TestProcedure } from '~/utils/finalTestProcedures'
 
 const { isAuthenticated, startLogin, logout, apiFetch, getClient } = useEgovAuth()
 const { pfxLoaded, certSubject, extraPfxCount, loadPfx, loadTestPfx, loadExtraPfx, signKouseiXml, signConfigXml } = useXmlSign()
@@ -297,13 +297,33 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
     }
 
     const configFiles = skeleton.results.configuration_file_name
-    const fi0 = skeleton.results.file_info[0]
+    const fileInfos = skeleton.results.file_info
+    const fi0 = fileInfos[0]
+    // 個別署名形式の構成情報 XML を役割分類した結果 (構築ブロックで設定し、署名ブロックで再利用)
+    let signAttachName: string | null = null
+    const writeAppliNames: string[] = []
 
     if (proc.format === 'individual' && configFiles.length >= 3) {
-      // 個別署名形式: 3つの構成情報XMLをそれぞれ異なるルールで処理
-      // configFiles[0] = "kousei.xml" (main, 様式ID=001)
-      // configFiles[1] = SignAttach構成情報 (スケルトン 様式ID=001のまま、添付書類署名)
-      // configFiles[2] = WriteAppli構成情報 (スケルトン 様式ID=009のまま、申請書作成)
+      // 個別署名形式: 構成情報 XML を「様式ID」で役割分類して処理する。
+      // configFiles[0] = "kousei.xml" (main 構成管理、様式ID=001)
+      // 様式ID=999000000000000001 のスケルトン = SignAttach (添付書類署名)、手続あたり 1 個 (Test.pdf 用)
+      // 様式ID=999000000000000009 のスケルトン = WriteAppli (申請書作成)、申請書様式 (file_info) と同数。
+      //   configFiles 上の出現順が file_info の順に対応する。
+      // ※ 単一様式は [main, SignAttach(001), WriteAppli(009)] の 3 個、
+      //   複数様式は [main, SignAttach(001), WriteAppli(009)×N] と WriteAppli が様式分だけ増える。
+      //   旧実装は configFiles[1]/[2] 決め打ちで 2 様式目を取りこぼし「＿０２が添付されていません」になっていた。
+      const mainConfigName = configFiles[0]!
+      for (let idx = 1; idx < configFiles.length; idx++) {
+        const cfName = configFiles[idx]!
+        const cf = zip.file(`${proc.proc_id}/${cfName}`)
+        if (!cf) continue
+        const cx = await cf.async('string')
+        const yoshikiId = cx.match(/<様式ID>([^<]*)<\/様式ID>/)?.[1]
+        if (yoshikiId === '999000000000000001') signAttachName = cfName
+        else writeAppliNames.push(cfName)
+      }
+      // 手続マスタが申請書様式とは別に要求する実添付書類 (タスク3、例: 「添付ファイル１」)
+      const requiredAttachments = PROCS_WITH_ATTACHMENT.get(proc.proc_id) ?? []
 
       // 構成情報ファイル (WriteAppli / SignAttach) の <手続ID> は、構成管理情報の
       // 手続識別子 (proc_id, 末尾 "000") とは別物。6/18 e-Gov 回答により末尾を
@@ -315,8 +335,8 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
       const writeAppliProcId = `${baseProcId}F01`
       const signAttachProcId = `${baseProcId}T01`
 
-      // --- configFiles[0]: メイン kousei.xml ---
-      const mainPath = `${proc.proc_id}/${configFiles[0]}`
+      // --- main kousei.xml ---
+      const mainPath = `${proc.proc_id}/${mainConfigName}`
       const mainFile = zip.file(mainPath)
       if (mainFile) {
         let xml = await mainFile.async('string')
@@ -326,17 +346,28 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
           xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
           xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
         }
-        // 添付書類属性情報: 4 件 — 5/7 e-Gov 正解サンプル (950A101220029000) 準拠
-        // 順序: WriteAppli構成情報 → 申請書本体 → SignAttach構成情報 → 実添付ファイル
+        // 添付書類属性情報 — 5/7 e-Gov 正解サンプル (950A101220029000) 準拠の順序を様式数分くり返す:
+        //   様式ごとに [WriteAppli構成情報 → 申請書本体] を列挙 → 最後に [SignAttach構成情報 → Test.pdf]
         // 本番送信モード (Trial off) では apply への明示参照が必須 (Trial だけだと省略可能だが apply で「添付必須」エラー)
-        if (fi0) {
-          let attachBlocks = ''
-          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>${fi0.form_name}の構成情報</添付書類名称><添付書類ファイル名称>${configFiles[2]}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
-          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>${fi0.form_name}</添付書類名称><添付書類ファイル名称>${fi0.apply_file_name}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
-          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名ファイル１の構成情報</添付書類名称><添付書類ファイル名称>${configFiles[1]}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
-          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名ファイル１</添付書類名称><添付書類ファイル名称>Test.pdf</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
-          xml = xml.replace('</管理情報>', '</管理情報>' + attachBlocks)
+        let attachBlocks = ''
+        for (let i = 0; i < fileInfos.length; i++) {
+          const fi = fileInfos[i]
+          const waName = writeAppliNames[i]
+          if (!fi || !waName) continue
+          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>${fi.form_name}の構成情報</添付書類名称><添付書類ファイル名称>${waName}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
+          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>${fi.form_name}</添付書類名称><添付書類ファイル名称>${fi.apply_file_name}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
         }
+        if (signAttachName) {
+          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名ファイル１の構成情報</添付書類名称><添付書類ファイル名称>${signAttachName}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
+          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名ファイル１</添付書類名称><添付書類ファイル名称>Test.pdf</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
+        }
+        // タスク3: 手続固有の必須添付書類 (素の添付。dummy txt を同梱)
+        for (const attName of requiredAttachments) {
+          const attFile = `${attName}.txt`
+          attachBlocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>${attName}</添付書類名称><添付書類ファイル名称>${attFile}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
+          zip.file(`${proc.proc_id}/${attFile}`, 'test')
+        }
+        xml = xml.replace('</管理情報>', '</管理情報>' + attachBlocks)
         // 申請書属性情報を削除 — 仕様書 (kouseikanri 項番 119) +「個別ファイル署名形式手続の場合は本タグは設定しない」
         // 5/7 e-Gov 正解サンプルでも main kousei.xml には申請書属性情報なし
         xml = xml.replace(/<申請書属性情報>[\s\S]*?<\/申請書属性情報>/g, '')
@@ -344,44 +375,50 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
         zip.file(mainPath, xml)
       }
 
-      // --- configFiles[1]: SignAttach（添付書類署名、様式ID=001のまま） ---
-      const signAttachPath = `${proc.proc_id}/${configFiles[1]}`
-      const signAttachFile = zip.file(signAttachPath)
-      if (signAttachFile) {
-        let xml = await signAttachFile.async('string')
-        console.log(`[${proc.proc_id}] SignAttach (before):`, xml.substring(0, 3000))
-        // 最小限のフィールドのみ: 受付行政機関ID, 手続ID, 手続名称, 申請種別
-        // 手続ID は添付書類側の "T01" サフィックス版を使う (6/18 e-Gov 回答)
-        const signAttachValues: Record<string, string> = {
-          受付行政機関ID: '100' + proc.proc_id.substring(0, 3),
-          手続ID: signAttachProcId,
-          手続名称: proc.name,
-          申請種別: '添付書類署名',
+      // --- SignAttach（添付書類署名、様式ID=001、手続あたり 1 個） ---
+      if (signAttachName) {
+        const signAttachPath = `${proc.proc_id}/${signAttachName}`
+        const signAttachFile = zip.file(signAttachPath)
+        if (signAttachFile) {
+          let xml = await signAttachFile.async('string')
+          console.log(`[${proc.proc_id}] SignAttach (before):`, xml.substring(0, 3000))
+          // 最小限のフィールドのみ: 受付行政機関ID, 手続ID, 手続名称, 申請種別
+          // 手続ID は添付書類側の "T01" サフィックス版を使う (6/18 e-Gov 回答)
+          const signAttachValues: Record<string, string> = {
+            受付行政機関ID: '100' + proc.proc_id.substring(0, 3),
+            手続ID: signAttachProcId,
+            手続名称: proc.name,
+            申請種別: '添付書類署名',
+          }
+          for (const [tag, value] of Object.entries(signAttachValues)) {
+            xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
+            xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
+          }
+          // 申請者情報 / 連絡先情報 (氏名〜電子メールアドレス) は空タグにする
+          // (6/18 e-Gov 回答: 構成情報ファイルには個人情報を設定しない)
+          xml = emptyApplicantTags(xml)
+          // 添付書類属性情報: e-Gov 5/7 正解サンプル準拠 — Test.pdf 1 件のみ
+          if (!xml.includes('<添付書類属性情報>')) {
+            const attachBlock = `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名ファイル１</添付書類名称><添付書類ファイル名称>Test.pdf</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
+            xml = xml.replace('</管理情報>', '</管理情報>' + attachBlock)
+          }
+          // 申請書属性情報を削除 (構成管理 XML 共通: 申請書送信では禁止)
+          xml = xml.replace(/<申請書属性情報>[\s\S]*?<\/申請書属性情報>/g, '')
+          xml = xml.replace(/<申請書属性情報\s*\/>/g, '')
+          zip.file(signAttachPath, xml)
         }
-        for (const [tag, value] of Object.entries(signAttachValues)) {
-          xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
-          xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
-        }
-        // 申請者情報 / 連絡先情報 (氏名〜電子メールアドレス) は空タグにする
-        // (6/18 e-Gov 回答: 構成情報ファイルには個人情報を設定しない)
-        xml = emptyApplicantTags(xml)
-        // 添付書類属性情報: e-Gov 5/7 正解サンプル準拠 — Test.pdf 1 件のみ
-        if (!xml.includes('<添付書類属性情報>')) {
-          const attachBlock = `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>添付書類署名ファイル１</添付書類名称><添付書類ファイル名称>Test.pdf</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
-          xml = xml.replace('</管理情報>', '</管理情報>' + attachBlock)
-        }
-        // 申請書属性情報を削除 (構成管理 XML 共通: 申請書送信では禁止)
-        xml = xml.replace(/<申請書属性情報>[\s\S]*?<\/申請書属性情報>/g, '')
-        xml = xml.replace(/<申請書属性情報\s*\/>/g, '')
-        zip.file(signAttachPath, xml)
       }
 
-      // --- configFiles[2]: WriteAppli（申請書作成、様式ID=009のまま） ---
-      const writeAppliPath = `${proc.proc_id}/${configFiles[2]}`
-      const writeAppliFile = zip.file(writeAppliPath)
-      if (writeAppliFile) {
+      // --- WriteAppli（申請書作成、様式ID=009、申請書様式と同数）---
+      // writeAppliNames[i] が fileInfos[i] に対応する。
+      for (let i = 0; i < writeAppliNames.length; i++) {
+        const waName = writeAppliNames[i]!
+        const fi = fileInfos[i]
+        const writeAppliPath = `${proc.proc_id}/${waName}`
+        const writeAppliFile = zip.file(writeAppliPath)
+        if (!writeAppliFile) continue
         let xml = await writeAppliFile.async('string')
-        console.log(`[${proc.proc_id}] WriteAppli (before):`, xml.substring(0, 3000))
+        console.log(`[${proc.proc_id}] WriteAppli[${i}] (before):`, xml.substring(0, 3000))
         // 最小限のフィールドのみ: 受付行政機関ID, 手続ID, 手続名称, 申請種別
         // 手続ID は申請書側の "F01" サフィックス版を使う (6/18 e-Gov 回答)
         const writeAppliValues: Record<string, string> = {
@@ -400,11 +437,10 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
         // WriteAppli (申請書作成) — e-Gov 5/7 正解サンプル + 仕様書 (beshi_kyoutsudata_kousei.json 項番 48, 119) 準拠:
         // - <添付書類属性情報>: 設定しない (申請書に対する構成情報では不要)
         // - <申請書属性情報>: 設定する (form_id/version/name/apply_file_name)
-        // ※ 2026-05-08 時点で実機が「申請書送信の場合は指定することができません」を返すため要 e-Gov 追加照会
         xml = xml.replace(/<添付書類属性情報>[\s\S]*?<\/添付書類属性情報>/g, '')
         xml = xml.replace(/<添付書類属性情報\s*\/>/g, '')
-        if (!xml.includes('<申請書属性情報>') && fi0) {
-          const shinseishoBlock = `<申請書属性情報><申請書様式ID>${fi0.form_id}</申請書様式ID><申請書様式バージョン>${String(fi0.form_version).padStart(4, '0')}</申請書様式バージョン><申請書様式名称>${fi0.form_name}</申請書様式名称><申請書ファイル名称>${fi0.apply_file_name}</申請書ファイル名称></申請書属性情報>`
+        if (!xml.includes('<申請書属性情報>') && fi) {
+          const shinseishoBlock = `<申請書属性情報><申請書様式ID>${fi.form_id}</申請書様式ID><申請書様式バージョン>${String(fi.form_version).padStart(4, '0')}</申請書様式バージョン><申請書様式名称>${fi.form_name}</申請書様式名称><申請書ファイル名称>${fi.apply_file_name}</申請書ファイル名称></申請書属性情報>`
           xml = xml.replace('</構成情報>', shinseishoBlock + '</構成情報>')
         }
         zip.file(writeAppliPath, xml)
@@ -540,34 +576,40 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
     if (enableSign.value && pfxLoaded.value && proc.signatureRequired) {
       if (proc.format === 'individual' && configFiles.length >= 3) {
         // 個別署名形式: Main kousei.xml は署名不要（構成管理XMLに署名値が存在しない仕様）
-        // WriteAppli / SignAttach のみ署名
+        // WriteAppli / SignAttach のみ署名 (役割分類は構築ブロックで設定済み)
 
-        // --- configFiles[1] = SignAttach: Test.pdf を参照して署名 (バイナリ uint8array で digest 計算) ---
-        const saSignPath = `${proc.proc_id}/${configFiles[1]}`
-        const saSignFile = zip.file(saSignPath)
-        if (saSignFile) {
-          let saXml = await saSignFile.async('string')
-          const pdfFile = zip.file(`${proc.proc_id}/Test.pdf`)
-          if (pdfFile) {
-            const pdfContent = await pdfFile.async('uint8array')
-            currentProc.value = `${proc.no}. SignAttach署名付与中...`
-            saXml = signConfigXml(saXml, 'Test.pdf', pdfContent)
-            console.log(`[${proc.proc_id}] SignAttach (signed):`, saXml.substring(0, 3000))
-            zip.file(saSignPath, saXml)
+        // --- SignAttach: Test.pdf を参照して署名 (バイナリ uint8array で digest 計算) ---
+        if (signAttachName) {
+          const saSignPath = `${proc.proc_id}/${signAttachName}`
+          const saSignFile = zip.file(saSignPath)
+          if (saSignFile) {
+            let saXml = await saSignFile.async('string')
+            const pdfFile = zip.file(`${proc.proc_id}/Test.pdf`)
+            if (pdfFile) {
+              const pdfContent = await pdfFile.async('uint8array')
+              currentProc.value = `${proc.no}. SignAttach署名付与中...`
+              saXml = signConfigXml(saXml, 'Test.pdf', pdfContent)
+              console.log(`[${proc.proc_id}] SignAttach (signed):`, saXml.substring(0, 3000))
+              zip.file(saSignPath, saXml)
+            }
           }
         }
 
-        // --- configFiles[2] = WriteAppli: 申請書ファイルを参照して署名 ---
-        const waSignPath = `${proc.proc_id}/${configFiles[2]}`
-        const waSignFile = zip.file(waSignPath)
-        if (waSignFile && fi0) {
+        // --- WriteAppli × N: 各申請書ファイルを参照して署名 (writeAppliNames[i] ↔ fileInfos[i]) ---
+        for (let i = 0; i < writeAppliNames.length; i++) {
+          const waName = writeAppliNames[i]!
+          const fi = fileInfos[i]
+          if (!fi) continue
+          const waSignPath = `${proc.proc_id}/${waName}`
+          const waSignFile = zip.file(waSignPath)
+          if (!waSignFile) continue
           let waXml = await waSignFile.async('string')
-          const applyFile = zip.file(`${proc.proc_id}/${fi0.apply_file_name}`)
+          const applyFile = zip.file(`${proc.proc_id}/${fi.apply_file_name}`)
           if (applyFile) {
             const applyContent = await applyFile.async('string')
-            currentProc.value = `${proc.no}. WriteAppli署名付与中...`
-            waXml = signConfigXml(waXml, fi0.apply_file_name, applyContent)
-            console.log(`[${proc.proc_id}] WriteAppli (signed):`, waXml.substring(0, 3000))
+            currentProc.value = `${proc.no}. WriteAppli[${i}]署名付与中...`
+            waXml = signConfigXml(waXml, fi.apply_file_name, applyContent)
+            console.log(`[${proc.proc_id}] WriteAppli[${i}] (signed):`, waXml.substring(0, 3000))
             zip.file(waSignPath, waXml)
           }
         }
