@@ -73,6 +73,33 @@ function buildTestValuesFromCheck(checkXml: string): Record<string, string> {
   const items = doc.querySelectorAll('checkItem')
   const values: Record<string, string> = {}
   const now = new Date()
+  // 数値で確定した element を記録し、後続の非数値 checkItem に 'test' 等で上書きされるのを防ぐ。
+  // (同一 element に numerical 版と非 numerical 版の checkItem が両方あるケース対策。Refs #101)
+  const numericElems = new Set<string>()
+
+  // 制約 (numerical / moreThan / lessThan / digitOnly) は同一 element の複数 checkItem に分散する
+  // ことがある (必須マーカーだけの item と numerical/range を持つ item が別)。element 単位で集約して
+  // おき、必須 item の処理時に参照する (例: 定年_年齢 の range は非必須 item 側にある)。Refs #101
+  const aggByElem = new Map<string, { num: boolean; more: number; less: number; digitOnly: boolean; kana: boolean }>()
+  items.forEach((item) => {
+    const xp2 = item.querySelector('xpath')?.textContent
+    if (!xp2) return
+    const el2 = (xp2.split('/').pop() ?? '').replace(/\[\d+\]$/, '')
+    if (!el2) return
+    const cur = aggByElem.get(el2) ?? { num: false, more: NaN, less: NaN, digitOnly: false, kana: false }
+    if (item.querySelector('numerical')) cur.num = true
+    const mt2 = item.querySelector('moreThan')
+    const lt2 = item.querySelector('lessThan')
+    if (mt2) cur.more = Number(mt2.parentElement?.querySelector('value')?.textContent)
+    if (lt2) cur.less = Number(lt2.parentElement?.querySelector('value')?.textContent)
+    const sl2 = item.querySelector('specifiedLetter')
+    const lists2 = sl2 ? Array.from(sl2.querySelectorAll('list')).map(x => x.textContent || '') : []
+    if (lists2.length > 0 && lists2.every(c => /^[0-9]$/.test(c))) cur.digitOnly = true
+    // 許可文字集合が全角カタカナ主体 (ASCII 英字を含まない) なら カタカナ必須フィールド。
+    // 被保険者氏名 / フリガナ 等は名前に「カナ」を含まないが specifiedLetter で katakana に限定される。
+    if (lists2.some(c => /[ァ-ヶ]/.test(c)) && !lists2.some(c => /[A-Za-z]/.test(c))) cur.kana = true
+    aggByElem.set(el2, cur)
+  })
 
   items.forEach((item) => {
     const tag = item.querySelector('errtag')?.textContent
@@ -94,12 +121,34 @@ function buildTestValuesFromCheck(checkXml: string): Record<string, string> {
     const intDigitEl = item.querySelector('intDigit > number')
     const intDigit = intDigitEl ? Number(intDigitEl.textContent) : 0
     const isEqual = item.querySelector('char > range > equal') !== null
+    // 数値範囲 (moreThan/lessThan): element 単位で集約した制約を参照 (制約が非必須 item 側に
+    // ある場合も拾う)。<value>N</value><moreThan/> 構造。範囲内の数値を入れる。
+    const agg = aggByElem.get(elem)
+    const moreThan = agg && !Number.isNaN(agg.more) ? agg.more : NaN
+    const lessThan = agg && !Number.isNaN(agg.less) ? agg.less : NaN
+    const hasRange = !Number.isNaN(moreThan) || !Number.isNaN(lessThan)
+    const isNumAgg = isNum || (agg?.num ?? false) || (agg?.digitOnly ?? false)
+
+    // 数値で確定済みの element を、非数値の checkItem (errtag のパターンが氏名等にマッチ) で
+    // 'test' に上書きさせない (契約期間/更新回数 が「数字でない」になる事故の防止)。
+    if (!isNumAgg && !hasRange && numericElems.has(elem)) return
 
     // タグ名パターンで値を決定（/区切りの場合は最後のセグメントで判定）
     const lastSeg = tag.includes('/') ? tag.split('/').pop()! : tag
     const fullTag = tag.toLowerCase()
     const t = lastSeg.toLowerCase()
-    if (t.includes('年号')) {
+    if (hasRange) {
+      // moreThan より大きく lessThan 以下の数値 (年齢/時間/契約期間 等が「小さすぎ」「数字でない」に
+      // なるのを防ぐ。errtag に「年」を含む年齢フィールドが和暦 '8' になる誤りもここで上書き)
+      let n = !Number.isNaN(moreThan) ? moreThan + 1 : 1
+      if (!Number.isNaN(lessThan) && n > lessThan) n = lessThan
+      values[elem] = String(n)
+      numericElems.add(elem)
+    } else if (agg?.kana) {
+      // カタカナ必須フィールド (specifiedLetter が全角カタカナ集合) は全角カタカナを入れる。
+      // 被保険者氏名/フリガナ 等が漢字 'テスト太郎' で「指定可能な文字以外」になるのを防ぐ。Refs #101
+      values[elem] = 'テストタロウ'
+    } else if (t.includes('年号')) {
       values[elem] = '令和'
     } else if (t.includes('年') && !t.includes('氏名') && !t.includes('名称')) {
       // intDigit>=4 は西暦（在留期間等）、それ以外は和暦
@@ -165,8 +214,9 @@ function buildTestValuesFromCheck(checkXml: string): Record<string, string> {
       values[elem] = '0001'
     } else if (t.includes('件数') || t.includes('人数')) {
       values[elem] = '0'
-    } else if (isNum) {
+    } else if (isNumAgg) {
       values[elem] = '1'
+      numericElems.add(elem)
     } else if (isFullWidth) {
       values[elem] = 'テスト'
     } else {
@@ -561,12 +611,29 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
         applyXml = applyXml.replace(/<日(\s[^>]*)?\/>(?!<\/)/g, (m, a) => `<日${a || ''}>${now.getDate()}</日>`)
         // 在留期間は非必須だが年月日が入ると日付チェックされる → 西暦4桁に修正
         applyXml = applyXml.replace(/<在留期間>([\s\S]*?)<\/在留期間>/g, (m) => m.replace(/<年([^>]*)>8<\/年>/, `<年$1>${now.getFullYear()}</年>`))
+        // カタカナ必須 element (specifiedLetter が全角カタカナ集合) を収集。fallback で名前に「カナ」を
+        // 含まない katakana フィールド (被保険者氏名/離職者氏名_フリガナ 等) にも全角カタカナを入れる。Refs #101
+        const kanaSet = new Set<string>()
+        {
+          const kd = new DOMParser().parseFromString(checkXml, 'text/xml')
+          for (const it of Array.from(kd.querySelectorAll('checkItem'))) {
+            const sl = it.querySelector('specifiedLetter')
+            if (!sl) continue
+            const lists = Array.from(sl.querySelectorAll('list')).map(x => x.textContent || '')
+            if (lists.some(c => /[ァ-ヶ]/.test(c)) && !lists.some(c => /[A-Za-z]/.test(c))) {
+              const xp = it.querySelector('xpath')?.textContent || ''
+              const el = (xp.split('/').pop() || '').replace(/\[\d+\]$/, '')
+              if (el) kanaSet.add(el)
+            }
+          }
+        }
         // check.xmlにomitDisabledがない必須フィールドのフォールバック: 残り空タグをタグ名パターンで埋める
         let fallbackCount = 0
         applyXml = applyXml.replace(/<([^\s/>]+)(\s[^>]*)?>(\s*)<\/\1>/g, (m, tag, attrs, content) => {
           if (content.trim()) return m // 既に値がある
           const t = tag.toLowerCase()
           let val = ''
+          if (kanaSet.has(tag)) { fallbackCount++; return `<${tag}${attrs || ''}>テストタロウ</${tag}>` }
           // 日付成分 (…x年月日x年/月/日/元号) を 氏名/名称 より先に数値で埋める。
           // 要素名に「氏名」等を含む日付フィールド (例「氏名変更x訂正x年月日x年」) が
           // 下の 氏名 分岐で "テスト太郎" になり「数字以外/半角でない」になるのを防ぐ (Refs #101)。
@@ -587,6 +654,10 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
           else if (t.includes('カナ名称') || t.includes('名称カナ')) val = 'テスト'
           else if (t.includes('漢字住所')) val = '東京都千代田区永田町'
           else if (t.includes('漢字名称')) val = 'テスト事業所'
+          // カナ氏名 / フリガナ氏名 は氏名分岐より先に全角カタカナを入れる (漢字 'テスト太郎' だと
+          // カナ専用フィールドで「指定可能な文字以外」になる。例: 変更後カナ氏名)。Refs #101
+          else if ((t.includes('カナ') || t.includes('ﾌﾘｶﾞﾅ') || t.includes('フリガナ')) && t.includes('氏名')) val = 'テストタロウ'
+          else if (t.includes('カナ') || t.includes('フリガナ')) val = 'テスト'
           else if (t.includes('所在地') || (t.includes('住所') && !t.includes('届') && !t.includes('変更'))) val = '東京都千代田区永田町'
           else if (t.includes('名称') || t.includes('事業所名')) val = 'テスト事業所'
           else if (t.includes('氏名')) val = 'テスト太郎'
