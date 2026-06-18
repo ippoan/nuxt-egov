@@ -664,6 +664,12 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
           else if (t.includes('名称') || t.includes('事業所名')) val = 'テスト事業所'
           else if (t.includes('氏名')) val = 'テスト太郎'
           else if (t.includes('見込額') || t.includes('賃金')) val = '100000'
+          // 労働保険料申告書 (確定/概算保険料算定内訳) の金額フィールドは check.xml に
+          // omitDisabled が無く、e-Gov サーバ側 (確定保険料申告) が値を要求するため空のまま
+          // 残ると「未入力必須」になる。算定額/算定基礎額/拠出金 (課税標準) と 保険料額 (税額) を
+          // 数値で埋める。保険料率 (…率、PrePrint でサーバ計算) は埋めない。Refs #101
+          else if ((t.includes('算定額') || t.includes('基礎額') || t.includes('拠出金')) && !t.includes('率') && !tag.startsWith('印字_') && !tag.startsWith('フラグ_')) val = '1000000'
+          else if (t.includes('保険料額') && !t.includes('率') && !tag.startsWith('印字_') && !tag.startsWith('フラグ_')) val = '13000'
           else if (t.includes('チェックボックス') || t.includes('チェック')) val = '1'
           if (!val) return m
           fallbackCount++
