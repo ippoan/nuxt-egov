@@ -327,12 +327,18 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
 
       // 構成情報ファイル (WriteAppli / SignAttach) の <手続ID> は、構成管理情報の
       // 手続識別子 (proc_id, 末尾 "000") とは別物。6/18 e-Gov 回答により末尾を
-      //   申請書 (WriteAppli)   → "F01"
-      //   添付書類 (SignAttach) → "T01"
+      //   申請書 (WriteAppli)   → "F0N" (様式連番。form1=F01, form2=F02, ...)
+      //   添付書類 (SignAttach) → "T01" (Test.pdf 1 個なので常に T01)
       // に置換した値を使う (例: 950A101220029000 → 950A101220029F01 / ...T01)。
       // 全個別署名手続 (No.23〜49) は proc_id が "000" 終わりで共通。
+      //
+      // ※ 複数様式手続では WriteAppli の <手続ID> を **様式ごとに F01/F02… と連番**に
+      //   する必要がある (全て F01 にすると 2 つ目の様式で「申請書様式ID(…0002)と
+      //   バージョンに一致する申請書様式は登録されていません」になる)。e-Gov は 手続ID の
+      //   文脈で 申請書様式ID を検証するため。単一様式は i=0 → F01 で従来どおり。
+      //   Trial 構造検証 (X-eGovAPI-Trial) で確定 (Refs #101)。
       const baseProcId = proc.proc_id.slice(0, -3)
-      const writeAppliProcId = `${baseProcId}F01`
+      const writeAppliProcId = (formIndex: number): string => `${baseProcId}F${String(formIndex + 1).padStart(2, '0')}`
       const signAttachProcId = `${baseProcId}T01`
 
       // --- main kousei.xml ---
@@ -426,10 +432,10 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
         let xml = await writeAppliFile.async('string')
         console.log(`[${proc.proc_id}] WriteAppli[${i}] (before):`, xml.substring(0, 3000))
         // 最小限のフィールドのみ: 受付行政機関ID, 手続ID, 手続名称, 申請種別
-        // 手続ID は申請書側の "F01" サフィックス版を使う (6/18 e-Gov 回答)
+        // 手続ID は申請書側の "F0N" サフィックス版 (様式ごとに連番、form i → F0{i+1})
         const writeAppliValues: Record<string, string> = {
           受付行政機関ID: '100' + proc.proc_id.substring(0, 3),
-          手続ID: writeAppliProcId,
+          手続ID: writeAppliProcId(i),
           手続名称: proc.name,
           申請種別: '申請書作成',
         }
