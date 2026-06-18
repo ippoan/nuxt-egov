@@ -144,6 +144,19 @@ function buildTestValuesFromCheck(checkXml: string): Record<string, string> {
       values[elem] = isNum ? '1' : 'ア'
     } else if ((t.includes('賃金') || t.includes('金額') || t.includes('見込額')) && !t.includes('日')) {
       values[elem] = maxLen >= 6 ? '100000' : '1'.repeat(Math.min(maxLen, 5))
+    // 労働保険番号の構成要素は専用の妥当値を入れる (errtag が「…労働保険番号の所掌」等で
+    // 下の汎用「番号」分岐に流れ '0001' になり、所掌(1桁コード)が「指定不可能な文字列」、
+    // 府県/管轄(2桁)等が文字数エラーになるのを防ぐ。基幹番号/枝番号は番号を含むので先に判定)。Refs #101
+    } else if (t.includes('所掌')) {
+      values[elem] = '1'
+    } else if (t.includes('府県')) {
+      values[elem] = '13'
+    } else if (t.includes('管轄')) {
+      values[elem] = '01'
+    } else if (t.includes('基幹番号')) {
+      values[elem] = '000001'
+    } else if (t.includes('枝番号')) {
+      values[elem] = '000'
     } else if (t.includes('番号') && maxLenEl && isEqual) {
       values[elem] = '1'.repeat(maxLen)
     } else if (t.includes('番号') && isNum) {
