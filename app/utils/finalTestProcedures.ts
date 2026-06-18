@@ -39,6 +39,7 @@ export const PROCS_WITH_DESTINATION = new Set([
 export const PROCS_WITH_ATTACHMENT = new Map<string, string[]>([
   ['950A101810022000', ['添付ファイル１']],
   ['950A102810037000', ['添付ファイル１']],
+  ['950A102810052000', ['添付ファイル１']],
 ])
 
 /**
