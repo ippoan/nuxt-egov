@@ -1807,8 +1807,10 @@ async function runInquiryTest(item: InquiryTestItem) {
         const sk10 = await apiFetch<{ results: { file_data: string; configuration_file_name: string[]; file_info: Array<{ form_id: string; form_version: number; form_name: string; apply_file_name: string }> } }>(`/procedure/${procId10}`)
         const zipData10 = Uint8Array.from(atob(sk10.results.file_data), c => c.charCodeAt(0))
         const zip10 = await JSZip.loadAsync(zipData10)
-        // submitOne 同等の充填 + 申請種別=補正 + 初回受付番号 + 署名 (amendApplication が arrive_id を運ぶ)
-        await buildStandardResubmit(zip10, proc10, sk10, '補正', aid10)
+        // submitOne 同等の充填 + 申請種別=部分補正 + 初回受付番号 + 署名 (amendApplication が arrive_id を運ぶ)。
+        // 申請種別は構成管理共通データ仕様書 (kouseikanri) no.14: 補正(部分補正)の場合は「部分補正」。
+        // XSD (kousei.xsd) の applyType enum は /apply 用で {新規申請,再提出,連名申請}、/apply/amend は別検証。
+        await buildStandardResubmit(zip10, proc10, sk10, '部分補正', aid10)
         const base64_10 = await zip10.generateAsync({ type: 'base64' })
         const res10 = await client.amendApplication({ arrive_id: aid10, send_file: { file_name: `${procId10}.zip`, file_data: base64_10 } })
         r.response = `arrive_id=${res10.results.arrive_id}`
