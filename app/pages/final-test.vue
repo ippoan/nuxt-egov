@@ -1556,6 +1556,23 @@ async function runInquiryTest(item: InquiryTestItem) {
             zip09r.file(p, xml)
           }
         }
+        // 署名: 本手続は signatureRequired (signatureCount=3)。PFX 読込済みなら kousei を
+        // 署名する。未署名だと e-Gov が 400 (UNKNOWN) を返す (submitOne 標準形式と同じ署名)。
+        if (pfxLoaded.value && proc09 && proc09.signatureRequired) {
+          for (const cfn of sk09r.results.configuration_file_name) {
+            const sp = `${procId09}/${cfn}`
+            const sf = zip09r.file(sp)
+            if (!sf) continue
+            let kx = await sf.async('string')
+            const appFiles = new Map<string, string | Uint8Array>()
+            for (const fi of sk09r.results.file_info) {
+              const af = zip09r.file(`${procId09}/${fi.apply_file_name}`)
+              if (af) appFiles.set(fi.apply_file_name, await af.async('string'))
+            }
+            kx = signKouseiXml(kx, appFiles, proc09.signatureCount)
+            zip09r.file(sp, kx)
+          }
+        }
         const base64_09r = await zip09r.generateAsync({ type: 'base64' })
         const res09 = await client.submitApplication({ proc_id: procId09, send_file: { file_name: `${procId09}.zip`, file_data: base64_09r } })
         r.response = `arrive_id=${res09.results.arrive_id} (初回=${aid09})`
@@ -1564,6 +1581,7 @@ async function runInquiryTest(item: InquiryTestItem) {
       case '10-1': {
         // 補正: 09-1 と同じ arrive_id で補正送信
         const procId10 = '900A020700013000'
+        const proc10 = TEST_PROCEDURES.find(p => p.proc_id === procId10)
         let aid10 = inquiryState.arriveId_09_base
         if (!aid10) throw new Error('09-1を先に実行してください')
         const detail10 = await client.getApplication(aid10)
@@ -1583,6 +1601,22 @@ async function runInquiryTest(item: InquiryTestItem) {
             xml = xml.replace(/<申請種別\/>/g, '<申請種別>補正</申請種別>')
             xml = xml.replace(/<申請種別><\/申請種別>/g, '<申請種別>補正</申請種別>')
             zip10.file(p, xml)
+          }
+        }
+        // 署名: 09-1 と同様、署名必須手続なので補正 ZIP も署名する (未署名だと 400)。
+        if (pfxLoaded.value && proc10 && proc10.signatureRequired) {
+          for (const cfn of sk10.results.configuration_file_name) {
+            const sp = `${procId10}/${cfn}`
+            const sf = zip10.file(sp)
+            if (!sf) continue
+            let kx = await sf.async('string')
+            const appFiles = new Map<string, string | Uint8Array>()
+            for (const fi of sk10.results.file_info) {
+              const af = zip10.file(`${procId10}/${fi.apply_file_name}`)
+              if (af) appFiles.set(fi.apply_file_name, await af.async('string'))
+            }
+            kx = signKouseiXml(kx, appFiles, proc10.signatureCount)
+            zip10.file(sp, kx)
           }
         }
         const base64_10 = await zip10.generateAsync({ type: 'base64' })
