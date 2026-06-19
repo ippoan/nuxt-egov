@@ -1321,6 +1321,162 @@ function firstFinancialName(bankListResult: unknown): string {
 // (氏名/住所/提出先/申請書属性情報) が空のまま送信され e-Gov が 400 を返していた。
 // submitOne の標準充填 (kouseiTestValues + 提出先 + 添付 + 申請書属性情報 + 署名) を再現し、
 // 加えて再提出/補正用の 申請種別 と (再提出のみ) 初回受付番号 をセットする。
+// submitOne の申請書フォーム XML 充填ブロックを共有化したヘルパ。kousei (構成管理) だけでなく
+// 申請書本体 (申請年月日/あて先/事業所情報 等) の必須項目を check.xml 解析で埋める。
+// 再提出 (09-1) でこれを呼ばないと申請書 XML が空のまま e-Gov 400 (申請データチェックエラー) になる。
+async function fillApplyXmls(
+  zip: Awaited<ReturnType<typeof JSZip.loadAsync>>,
+  proc: TestProcedure,
+  skeleton: { results: { file_info: Array<{ form_id: string; form_version: number; form_name: string; apply_file_name: string }> } },
+): Promise<void> {
+    // 申請書XML: checkファイルから必須フィールドを解析し、テスト値を自動填入
+    for (const fi of skeleton.results.file_info) {
+      const applyPath = `${proc.proc_id}/${fi.apply_file_name}`
+      const checkPath = `${proc.proc_id}/${fi.form_id}check.xml`
+      const applyFile = zip.file(applyPath)
+      const checkFile = zip.file(checkPath)
+      if (applyFile && checkFile) {
+        let applyXml = await applyFile.async('string')
+        const checkXml = await checkFile.async('string')
+        const testValues = buildTestValuesFromCheck(checkXml)
+        for (const [tag, value] of Object.entries(testValues)) {
+          // check.xml の / 区切りはネスト構造のパス表現 — 最後のセグメントが実際のタグ名
+          const actualTag = tag.includes('/') ? tag.split('/').pop()! : tag
+          // XMLタグに属性（DispName等）が付いている場合にも対応、自己閉じタグも対応
+          // 既に値が入っているタグも上書き（スケルトンのプリセット値がカタカナ制約等に違反する場合がある）
+          applyXml = applyXml.replace(new RegExp(`<${actualTag}(\\s[^>]*)?>([^<]*)</${actualTag}>`, 'g'), (m, attrs) => `<${actualTag}${attrs || ''}>${value}</${actualTag}>`)
+          applyXml = applyXml.replace(new RegExp(`<${actualTag}(\\s[^>]*)?\\/>`, 'g'), (m, attrs) => `<${actualTag}${attrs || ''}>${value}</${actualTag}>`)
+        }
+        // 年/月/日はネスト構造で複数存在するため、buildTestValuesでは1回しか置換されない
+        // 残った空の年月日タグを全て埋める（空タグ + 自己閉じタグ両対応）
+        const now = new Date()
+        applyXml = applyXml.replace(/<年号(\s[^>]*)?>(\s*)<\/年号>/g, (m, a) => `<年号${a || ''}>令和</年号>`)
+        applyXml = applyXml.replace(/<年号(\s[^>]*)?\/>(?!<\/)/g, (m, a) => `<年号${a || ''}>令和</年号>`)
+        applyXml = applyXml.replace(/<年(\s[^>]*)?>(\s*)<\/年>/g, (m, a) => `<年${a || ''}>8</年>`)
+        applyXml = applyXml.replace(/<年(\s[^>]*)?\/>(?!<\/)/g, (m, a) => `<年${a || ''}>8</年>`)
+        applyXml = applyXml.replace(/<月(\s[^>]*)?>(\s*)<\/月>/g, (m, a) => `<月${a || ''}>${now.getMonth() + 1}</月>`)
+        applyXml = applyXml.replace(/<月(\s[^>]*)?\/>(?!<\/)/g, (m, a) => `<月${a || ''}>${now.getMonth() + 1}</月>`)
+        applyXml = applyXml.replace(/<日(\s[^>]*)?>(\s*)<\/日>/g, (m, a) => `<日${a || ''}>${now.getDate()}</日>`)
+        applyXml = applyXml.replace(/<日(\s[^>]*)?\/>(?!<\/)/g, (m, a) => `<日${a || ''}>${now.getDate()}</日>`)
+        // 在留期間は日付チェック (年 moreThan=1900) があるため 年 を西暦4桁にする。skeleton
+        // プリセットが '2' (令和2想定) の場合もあるので現値に依らず置換する (年=2 だと
+        // 「1900未満で小さい」「正しい日付でない」になる。Refs #101)。
+        applyXml = applyXml.replace(/<在留期間>([\s\S]*?)<\/在留期間>/g, (m) => m.replace(/(<年[^>]*>)[^<]*(<\/年>)/, `$1${now.getFullYear()}$2`))
+        // カタカナ必須 element (specifiedLetter が全角カタカナ集合) を収集。fallback で名前に「カナ」を
+        // 含まない katakana フィールド (被保険者氏名/離職者氏名_フリガナ 等) にも全角カタカナを入れる。Refs #101
+        const kanaSet = new Set<string>()
+        {
+          const kd = new DOMParser().parseFromString(checkXml, 'text/xml')
+          for (const it of Array.from(kd.querySelectorAll('checkItem'))) {
+            const sl = it.querySelector('specifiedLetter')
+            if (!sl) continue
+            const lists = Array.from(sl.querySelectorAll('list')).map(x => x.textContent || '')
+            if (lists.some(c => /[ァ-ヶ]/.test(c)) && !lists.some(c => /[A-Za-z]/.test(c))) {
+              const xp = it.querySelector('xpath')?.textContent || ''
+              const el = (xp.split('/').pop() || '').replace(/\[\d+\]$/, '')
+              if (el) kanaSet.add(el)
+            }
+          }
+        }
+        // check.xmlにomitDisabledがない必須フィールドのフォールバック: 残り空タグをタグ名パターンで埋める
+        let fallbackCount = 0
+        applyXml = applyXml.replace(/<([^\s/>]+)(\s[^>]*)?>(\s*)<\/\1>/g, (m, tag, attrs, content) => {
+          if (content.trim()) return m // 既に値がある
+          const t = tag.toLowerCase()
+          let val = ''
+          if (kanaSet.has(tag)) { fallbackCount++; return `<${tag}${attrs || ''}>テストタロウ</${tag}>` }
+          // 日付成分 (…x年月日x年/月/日/元号) を 氏名/名称 より先に数値で埋める。
+          // 要素名に「氏名」等を含む日付フィールド (例「氏名変更x訂正x年月日x年」) が
+          // 下の 氏名 分岐で "テスト太郎" になり「数字以外/半角でない」になるのを防ぐ (Refs #101)。
+          if (t.includes('年月日')) {
+            if (tag.endsWith('元号') || tag.endsWith('年号')) val = '令和'
+            else if (tag.endsWith('年')) val = '8'
+            else if (tag.endsWith('月')) val = String(now.getMonth() + 1)
+            else if (tag.endsWith('日')) val = String(now.getDate())
+          }
+          if (val) { fallbackCount++; return `<${tag}${attrs || ''}>${val}</${tag}>` }
+          if (t.includes('scriptcheck')) val = '1'
+          else if (t.includes('配達局番号')) val = '100'
+          else if (t.includes('町域番号')) val = '0014'
+          else if (t.includes('市外局番')) val = '03'
+          else if (t.includes('市内局番')) val = '1234'
+          else if (t.includes('加入者番号')) val = '5678'
+          else if (t.includes('カナ住所') || t.includes('住所カナ')) val = 'トウキョウト'
+          else if (t.includes('カナ名称') || t.includes('名称カナ')) val = 'テスト'
+          else if (t.includes('漢字住所')) val = '東京都千代田区永田町'
+          else if (t.includes('漢字名称')) val = 'テスト事業所'
+          // カナ氏名 / フリガナ氏名 は氏名分岐より先に全角カタカナを入れる (漢字 'テスト太郎' だと
+          // カナ専用フィールドで「指定可能な文字以外」になる。例: 変更後カナ氏名)。Refs #101
+          else if ((t.includes('カナ') || t.includes('ﾌﾘｶﾞﾅ') || t.includes('フリガナ')) && t.includes('氏名')) val = 'テストタロウ'
+          else if (t.includes('カナ') || t.includes('フリガナ')) val = 'テスト'
+          else if (t.includes('所在地') || (t.includes('住所') && !t.includes('届') && !t.includes('変更'))) val = '東京都千代田区永田町'
+          else if (t.includes('名称') || t.includes('事業所名')) val = 'テスト事業所'
+          else if (t.includes('氏名')) val = 'テスト太郎'
+          else if (t.includes('見込額') || t.includes('賃金')) val = '100000'
+          // 労働保険料申告書 (確定/概算保険料算定内訳) の金額フィールドは check.xml に
+          // omitDisabled が無く、e-Gov サーバ側 (確定保険料申告) が値を要求するため空のまま
+          // 残ると「未入力必須」になる。算定額/算定基礎額/拠出金 (課税標準) と 保険料額 (税額) を
+          // 数値で埋める。保険料率 (…率、PrePrint でサーバ計算) は埋めない。Refs #101
+          else if ((t.includes('算定額') || t.includes('基礎額') || t.includes('拠出金')) && !t.includes('率') && !tag.startsWith('印字_') && !tag.startsWith('フラグ_')) val = '1000000'
+          else if (t.includes('保険料額') && !t.includes('率') && !tag.startsWith('印字_') && !tag.startsWith('フラグ_')) val = '13000'
+          else if (t.includes('チェックボックス') || t.includes('チェック')) val = '1'
+          if (!val) return m
+          fallbackCount++
+          return `<${tag}${attrs || ''}>${val}</${tag}>`
+        })
+        // ポストプロセス: スケルトンにプリセットされた値の文字種修正
+        // カタカナ/フリガナフィールドに漢字が入っている場合はカタカナに置換
+        applyXml = applyXml.replace(/<([^<>]*(?:カタカナ|フリガナ)[^<>]*)>([^<]+)<\/\1>/g, (m, tag, val) => {
+          // 既にカタカナのみなら何もしない
+          if (/^[\u30A0-\u30FF\u3000\s]+$/.test(val)) return m
+          // 漢字/ひらがな混じりの場合はタグ名に基づいてカタカナ値を設定
+          const t = tag.toLowerCase()
+          if (t.includes('氏名')) return `<${tag}>テストタロウ</${tag}>`
+          if (t.includes('所在地') || t.includes('住所')) return `<${tag}>トウキョウトチヨダクナガタチョウ</${tag}>`
+          return `<${tag}>テストジギョウショ</${tag}>`
+        })
+        // 賃金関連フィールド: 桁数制限（maxLen不明だが6桁超はエラーなので1桁に）
+        applyXml = applyXml.replace(/<(賃金締切日|賃金支払日当翌|賃金支払日)>(\d{4,})<\/\1>/g, '<$1>1</$1>')
+        // 文字数制約の最終強制: check.xml の char>range を element 単位で集約し、値長が制約に
+        // 反する field のみ補正する。skeleton プリセットや別 checkItem 由来で '0001' のような
+        // 不正長が同名 element に global 充填され「入力可能な文字数で入力されていません」になるのを
+        // 是正する (例: 労働保険番号の府県=eq2/基幹番号=eq6 に len4 の値)。適合済みの値は変えない。Refs #101
+        const lenDoc = new DOMParser().parseFromString(checkXml, 'text/xml')
+        const lenMap = new Map<string, { len: number; equal: boolean; num: boolean }>()
+        for (const it of Array.from(lenDoc.querySelectorAll('checkItem'))) {
+          const numEl = it.querySelector('char > range > number')
+          if (!numEl) continue
+          const xp = it.querySelector('xpath')?.textContent || ''
+          const el = (xp.split('/').pop() || '').replace(/\[\d+\]$/, '')
+          if (!el) continue
+          const len = Number(numEl.textContent)
+          const equal = it.querySelector('char > range > equal') !== null
+          const num = it.querySelector('numerical') !== null
+          const prev = lenMap.get(el)
+          if (!prev || (equal && !prev.equal)) lenMap.set(el, { len, equal, num }) // equal を優先
+        }
+        for (const [el, c] of lenMap) {
+          applyXml = applyXml.replace(new RegExp(`<${el}(\\s[^>]*)?>([^<]*)</${el}>`, 'g'), (m, attrs: string, val: string) => {
+            if (!val) return m // 空は必須チェックの管轄
+            const curLen = [...val].length
+            if (c.equal ? curLen === c.len : curLen <= c.len) return m // 既に適合
+            let fixed: string
+            if (c.num || /^[0-9]+$/.test(val)) {
+              const digits = val.replace(/\D/g, '') || '0'
+              fixed = c.equal ? digits.padEnd(c.len, '0').slice(0, c.len) : digits.slice(0, c.len)
+            } else {
+              const pad = val[0] || 'X'
+              fixed = c.equal ? (curLen > c.len ? [...val].slice(0, c.len).join('') : val + pad.repeat(c.len - curLen)) : [...val].slice(0, c.len).join('')
+            }
+            return `<${el}${attrs || ''}>${fixed}</${el}>`
+          })
+        }
+        console.log(`[${proc.proc_id}] apply filled ${Object.keys(testValues).length} fields + ${fallbackCount} fallback`)
+        zip.file(applyPath, applyXml)
+      }
+    }
+}
+
 async function buildStandardResubmit(
   zip: Awaited<ReturnType<typeof JSZip.loadAsync>>,
   proc: TestProcedure,
@@ -1377,6 +1533,8 @@ async function buildStandardResubmit(
     }
     zip.file(p, xml)
   }
+  // 申請書フォーム XML も submitOne 同等に充填 (必須項目を埋めないと申請データチェックエラー 400)
+  await fillApplyXmls(zip, proc, sk)
   // 署名 (signatureRequired + PFX 読込済み): submitOne 標準形式と同じ署名パス
   if (pfxLoaded.value && proc.signatureRequired) {
     for (const cfn of sk.results.configuration_file_name) {
