@@ -2,6 +2,22 @@ import { EgovClient, generatePKCE, buildAuthorizationUrl } from '@ippoan/egov-sh
 import type { TokenResponse } from '@ippoan/egov-shinsei-sdk'
 import { captureFetch, captureActive, pushEvidence, realEgovUrl, abbreviate } from '~/utils/egovCapture'
 
+// 最終確認試験エビデンス: token レスポンスの秘密 (access/refresh token) をマスクして返す。
+function maskTokenResp(data: TokenResponse): Record<string, unknown> {
+  return { ...data, access_token: '****(masked)', refresh_token: '****(masked)' }
+}
+
+// リダイレクトURL の認可コード (code=...) をマスク。01-1 エビデンスの _03 用。
+function maskCodeParam(url: string): string {
+  try {
+    const u = new URL(url)
+    if (u.searchParams.has('code')) u.searchParams.set('code', '****(masked)')
+    return u.toString()
+  } catch {
+    return url.replace(/([?&]code=)[^&]*/i, '$1****(masked)')
+  }
+}
+
 export function useEgovAuth() {
   const config = useRuntimeConfig()
   const authBase = config.public.egovAuthBase as string
@@ -56,6 +72,10 @@ export function useEgovAuth() {
       codeChallenge,
     })
 
+    // 最終確認試験エビデンス (01-1 ユーザー認可): 認可リクエスト URL を記録しておく
+    // (照会テストの capture 窓の外で起きるため localStorage 経由で持ち越す)。
+    localStorage.setItem('egov_ev_authorize', JSON.stringify({ url, capturedAt: new Date().toISOString() }))
+
     window.location.href = url
   }
 
@@ -70,6 +90,7 @@ export function useEgovAuth() {
       throw new Error('Code verifier not found')
     }
 
+    const redirectUrl = import.meta.client ? window.location.href : ''
     const data = await $fetch<TokenResponse>('/api/egov/token', {
       method: 'POST',
       body: {
@@ -79,6 +100,18 @@ export function useEgovAuth() {
         code_verifier: codeVerifier,
       },
     })
+
+    // 最終確認試験エビデンス: 01-1 のリダイレクトURL と 02-1 のトークン交換 req/res を
+    // 記録しておく (login flow は照会テストの capture 窓の外なので localStorage 持ち越し)。
+    if (import.meta.client) {
+      const cap = new Date().toISOString()
+      localStorage.setItem('egov_ev_callback', JSON.stringify({ redirectUrl: maskCodeParam(redirectUrl), capturedAt: cap }))
+      localStorage.setItem('egov_ev_token', JSON.stringify({
+        reqBody: { grant_type: 'authorization_code', code: '****(masked)', redirect_uri: redirectUri, code_verifier: '****(masked)' },
+        response: maskTokenResp(data),
+        capturedAt: cap,
+      }))
+    }
 
     setTokens(data)
     sessionStorage.removeItem('egov_code_verifier')
@@ -95,6 +128,19 @@ export function useEgovAuth() {
         refresh_token: refreshToken.value,
       },
     })
+
+    // 最終確認試験エビデンス (03-1 アクセストークン再取得): capture 中なら実 req/res を記録。
+    if (import.meta.client && captureActive()) {
+      pushEvidence({
+        egovUrl: realEgovUrl('/api/egov/token'),
+        method: 'POST',
+        requestHeaders: { 'Content-Type': 'application/json' },
+        requestBody: { grant_type: 'refresh_token', refresh_token: '****(masked)' },
+        response: maskTokenResp(data),
+        httpStatus: 200,
+        capturedAt: new Date().toISOString(),
+      })
+    }
 
     setTokens(data)
   }

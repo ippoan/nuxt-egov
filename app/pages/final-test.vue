@@ -4,7 +4,7 @@ import { EgovApiError } from '@ippoan/egov-shinsei-sdk'
 import type { EgovClient } from '@ippoan/egov-shinsei-sdk'
 import JSZip from 'jszip'
 import { TEST_PROCEDURES, PROCS_WITH_DESTINATION, PROCS_WITH_ATTACHMENT, PROCS_WITH_PAYMENT, type TestProcedure } from '~/utils/finalTestProcedures'
-import { beginCapture, endCapture, pushEvidence, type EvidenceCall } from '~/utils/egovCapture'
+import { beginCapture, endCapture, pushEvidence, realEgovUrl, type EvidenceCall } from '~/utils/egovCapture'
 
 const { isAuthenticated, startLogin, logout, apiFetch, getClient } = useEgovAuth()
 const { pfxLoaded, certSubject, extraPfxCount, loadPfx, loadTestPfx, loadExtraPfx, signKouseiXml, signConfigXml } = useXmlSign()
@@ -353,6 +353,9 @@ function saveResults() {
 function getResult(procId: string): ProcedureResult {
   return results.value.get(procId) ?? { proc_id: procId, status: 'pending' }
 }
+
+// submitOne が直近に生成した申請データ ZIP (base64) を proc_id 別に保持 (07-1/07-2 の _04.ZIP 用)
+const lastSentZip: Record<string, string> = {}
 
 async function submitOne(proc: TestProcedure, clearLog = false) {
   if (clearLog) errorLog.value = ''
@@ -825,6 +828,7 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
     if (mainApply) r.debugApplyXml = await mainApply.async('string')
 
     const newZipBase64 = await zip.generateAsync({ type: 'base64' })
+    lastSentZip[proc.proc_id] = newZipBase64 // _04.ZIP 用 (07-1/07-2 が proc_id で参照)
 
     // 3. 申請送信
     r.status = 'submitting'
@@ -1645,12 +1649,21 @@ async function runInquiryTest(item: InquiryTestItem) {
       // 認証・認可 (01-1 〜 04-2): ログイン済みなら自動pass
       case '01-1': {
         if (!isAuthenticated.value) throw new Error('未ログイン')
-        r.response = 'ログイン済み（OAuth認可完了）'
+        // ログイン時に保存した認可URL/リダイレクトURLをエビデンス化 (_01=認可URL, _03=リダイレクトURL)
+        const az = JSON.parse(localStorage.getItem('egov_ev_authorize') || 'null')
+        const cb = JSON.parse(localStorage.getItem('egov_ev_callback') || 'null')
+        if (!az || !cb) throw new Error('認可エビデンス未記録。ログアウト→再ログインしてから再実行してください。')
+        pushEvidence({ egovUrl: az.url, method: 'GET', requestHeaders: {}, requestBody: undefined, response: cb.redirectUrl, httpStatus: 302, capturedAt: az.capturedAt })
+        r.response = 'OAuth認可完了（認可URL/リダイレクトURL記録）'
         break
       }
       case '02-1': {
         if (!isAuthenticated.value) throw new Error('未ログイン')
-        r.response = 'トークン取得済み'
+        // ログイン時に保存したトークン交換 req/res をエビデンス化
+        const tk = JSON.parse(localStorage.getItem('egov_ev_token') || 'null')
+        if (!tk) throw new Error('トークン取得エビデンス未記録。ログアウト→再ログインしてから再実行してください。')
+        pushEvidence({ egovUrl: realEgovUrl('/api/egov/token'), method: 'POST', requestHeaders: { 'Content-Type': 'application/json' }, requestBody: tk.reqBody, response: tk.response, httpStatus: 200, capturedAt: tk.capturedAt })
+        r.response = 'トークン取得（記録済み）'
         break
       }
       case '03-1': {
@@ -1693,6 +1706,7 @@ async function runInquiryTest(item: InquiryTestItem) {
         const proc = TEST_PROCEDURES.find(p => p.proc_id === '950A010700005000')
         if (!proc) throw new Error('手続 950A010700005000 not found')
         const skeleton = await apiFetch<{ results: { file_data: string } }>(`/procedure/${proc.proc_id}`)
+        inquiryState['zip_05-1'] = skeleton.results.file_data // _04.ZIP (取得した申請データ)
         r.response = `スケルトン取得成功 (${Math.round(skeleton.results.file_data.length / 1024)}KB)`
         break
       }
@@ -1723,6 +1737,7 @@ async function runInquiryTest(item: InquiryTestItem) {
         const proc071 = TEST_PROCEDURES.find(p => p.proc_id === '950A010700005000')
         if (!proc071) throw new Error('手続 950A010700005000 not found')
         await submitOne(proc071)
+        if (lastSentZip[proc071.proc_id]) inquiryState['zip_07-1'] = lastSentZip[proc071.proc_id]! // _04.ZIP
         const res071 = results.value.get(proc071.proc_id)
         if (res071?.status === 'done') {
           inquiryState.arriveId_07_1 = res071.arrive_id!
@@ -1737,6 +1752,7 @@ async function runInquiryTest(item: InquiryTestItem) {
         const proc072 = TEST_PROCEDURES.find(p => p.proc_id === '950A010700006000')
         if (!proc072) throw new Error('手続 950A010700006000 not found')
         await submitOne(proc072)
+        if (lastSentZip[proc072.proc_id]) inquiryState['zip_07-2'] = lastSentZip[proc072.proc_id]! // _04.ZIP
         const res072 = results.value.get(proc072.proc_id)
         if (res072?.status === 'done') {
           inquiryState.arriveId_07_2 = res072.arrive_id!
@@ -1755,6 +1771,7 @@ async function runInquiryTest(item: InquiryTestItem) {
         const zipData081 = Uint8Array.from(atob(skeleton081.results.file_data), c => c.charCodeAt(0))
         const zip081 = await JSZip.loadAsync(zipData081)
         const bulkBase64 = await zip081.generateAsync({ type: 'base64' })
+        inquiryState['zip_08-1'] = bulkBase64 // _04.ZIP
         const bulkRes = await $fetch<{ results: { send_number: string } }>('/api/egov/bulk-apply', {
           method: 'POST',
           body: { send_file: { file_name: 'bulk.zip', file_data: bulkBase64 } },
@@ -1783,6 +1800,7 @@ async function runInquiryTest(item: InquiryTestItem) {
           }
         }
         const bulkBase64_082 = await zip082.generateAsync({ type: 'base64' })
+        inquiryState['zip_08-2'] = bulkBase64_082 // _04.ZIP
         const bulkRes082 = await $fetch<{ results: { send_number: string } }>('/api/egov/bulk-apply', {
           method: 'POST',
           body: { send_file: { file_name: 'bulk-error.zip', file_data: bulkBase64_082 } },
@@ -1815,6 +1833,7 @@ async function runInquiryTest(item: InquiryTestItem) {
         // submitOne 同等の充填 (氏名/住所/提出先/申請書属性情報/添付) + 申請種別=再提出 + 初回受付番号 + 署名
         await buildStandardResubmit(zip09r, proc09, sk09r, '再提出', aid09)
         const base64_09r = await zip09r.generateAsync({ type: 'base64' })
+        inquiryState['zip_09-1'] = base64_09r // _04.ZIP
         const res09 = await client.submitApplication({ proc_id: procId09, send_file: { file_name: `${procId09}.zip`, file_data: base64_09r } })
         r.response = `arrive_id=${res09.results.arrive_id} (初回=${aid09})`
         break
@@ -1840,6 +1859,7 @@ async function runInquiryTest(item: InquiryTestItem) {
         // XSD (kousei.xsd) の applyType enum は /apply 用で {新規申請,再提出,連名申請}、/apply/amend は別検証。
         await buildStandardResubmit(zip10, proc10, sk10, '部分補正', aid10)
         const base64_10 = await zip10.generateAsync({ type: 'base64' })
+        inquiryState['zip_10-1'] = base64_10 // _04.ZIP
         const res10 = await client.amendApplication({ arrive_id: aid10, send_file: { file_name: `${procId10}.zip`, file_data: base64_10 } })
         r.response = `arrive_id=${res10.results.arrive_id}`
         break
@@ -1891,6 +1911,7 @@ async function runInquiryTest(item: InquiryTestItem) {
           zip111.file(mainPath111, signedMain111)
         }
         const withdrawBase64 = await zip111.generateAsync({ type: 'base64' })
+        inquiryState['zip_11-1'] = withdrawBase64 // _04.ZIP
         await client.withdrawApplication({
           arrive_id: aid111,
           send_file: { file_name: 'withdraw.zip', file_data: withdrawBase64 },
@@ -1905,6 +1926,7 @@ async function runInquiryTest(item: InquiryTestItem) {
         const zipData121 = Uint8Array.from(atob(sk121.results.file_data), c => c.charCodeAt(0))
         const zip121 = await JSZip.loadAsync(zipData121)
         const base64_121 = await zip121.generateAsync({ type: 'base64' })
+        inquiryState['zip_12-1'] = base64_121 // _04.ZIP
         const checkRes = await client.checkFormat({
           proc_id: proc121.proc_id,
           send_file: { file_name: 'check.zip', file_data: base64_121 },
@@ -1929,6 +1951,7 @@ async function runInquiryTest(item: InquiryTestItem) {
           }
         }
         const base64_122 = await zip122.generateAsync({ type: 'base64' })
+        inquiryState['zip_12-2'] = base64_122 // _04.ZIP
         const checkRes122 = await client.checkFormat({
           proc_id: proc122.proc_id,
           send_file: { file_name: 'check-error.zip', file_data: base64_122 },
@@ -2184,7 +2207,10 @@ async function runInquiryTest(item: InquiryTestItem) {
           r.response = `active=${res.active}`
           pushEvidence({ egovUrl: `${EGOV_AUTH_BASE}/token/introspect`, method: 'POST', requestHeaders: { 'Content-Type': 'application/x-www-form-urlencoded' }, requestBody: { token: '****(masked)', token_type_hint: 'refresh_token' }, response: res, httpStatus: 200, capturedAt: new Date().toISOString() })
         } catch (e: any) {
-          // ログアウト後はエラーになる場合あり（仕様通り）
+          // ログアウト後はエラーになる場合あり（仕様通り）。エラー応答もエビデンスとして記録する。
+          const status = e?.statusCode ?? e?.status ?? 400
+          const body = e?.data ?? { error: e?.message }
+          pushEvidence({ egovUrl: `${EGOV_AUTH_BASE}/token/introspect`, method: 'POST', requestHeaders: { 'Content-Type': 'application/x-www-form-urlencoded' }, requestBody: { token: '****(masked)', token_type_hint: 'refresh_token' }, response: body, httpStatus: status, capturedAt: new Date().toISOString() })
           r.response = `expected error: ${e.data?.error ?? e.message}`
         }
         break
@@ -2410,12 +2436,13 @@ async function exportSubmissionZip() {
         ? ev.map((c, i) => `=== 呼び出し ${i + 1}/${ev.length}: ${c.method} ${c.egovUrl} ===\n${evidence03Txt(c)}`).join('\n')
         : evidence03Txt(primary)
     folder.file(`${softwareId}_${t.test_no}_03.txt`, resp)
-    // _04.ZIP: テストデータ添付 (公文書 19-1 / 電子送達 30-1 は取得した ZIP を同梱)
-    if (t.test_no === '19-1' && inquiryState.officialDocFileData) {
-      folder.file(`${softwareId}_${t.test_no}_04.ZIP`, b64ToBytes(inquiryState.officialDocFileData))
-    }
-    if (t.test_no === '30-1' && inquiryState.postDocFileData) {
-      folder.file(`${softwareId}_${t.test_no}_04.ZIP`, b64ToBytes(inquiryState.postDocFileData))
+    // _04.ZIP: テストデータ添付。申請データ送信系は送信ZIP (zip_<No>)、
+    // 公文書 19-1 / 電子送達 30-1 は取得した ZIP を同梱する。
+    const z04 = inquiryState['zip_' + t.test_no]
+      || (t.test_no === '19-1' ? inquiryState.officialDocFileData : '')
+      || (t.test_no === '30-1' ? inquiryState.postDocFileData : '')
+    if (z04) {
+      folder.file(`${softwareId}_${t.test_no}_04.ZIP`, b64ToBytes(z04))
     }
     included++
   }
@@ -2438,6 +2465,13 @@ async function exportSubmissionZip() {
       '4. メール送付 (件名/本文は同梱の「メール本文_*.txt」参照):',
       '   - 1通目: 成績書 (1／総数)  添付 = 上記ZIP',
       '   - 最終: パスワード通知メール (解凍パスワードのみ記載)',
+      '',
+      '【手動で追加が必要なもの】',
+      '・画面ハードコピー (_03.jpg): 01-1 (ユーザ認可後の画面) と 24-1 (電子納付金融機関',
+      '  サイト) はブラウザのスクショを各 API フォルダに手動で入れる',
+      `  (例 ${softwareId}_01-1/${softwareId}_01-1_03.jpg)。`,
+      '・01-1/02-1 のエビデンスは「ログアウト→再ログイン」後に各テストを再実行すると記録される',
+      '  (認可URL・トークン交換はログイン時のみ発生するため)。',
       '',
       `※ 情報共有テスト (32-1〜36-1) は検証用GビズID未取得のため対象外。`,
       skipped.length ? `※ evidence未取得でスキップした試験No: ${skipped.join(', ')}` : '',
