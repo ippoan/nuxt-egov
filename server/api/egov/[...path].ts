@@ -39,7 +39,12 @@ export default defineEventHandler(async (event) => {
   const data = await res.json()
 
   if (!res.ok) {
-    throw createError({ statusCode: res.status, data })
+    // e-Gov のエラー本文 (title / detail / report_list 等) をそのまま透過する。
+    // createError({ data }) で包むと h3 が { statusCode, message, data: <body> } に
+    // ラップし、SDK (EgovApiError) が top-level の report_list / detail を拾えず
+    // messages:[""] の空表示になっていた (申請データチェックエラーの詳細が消える)。
+    setResponseStatus(event, res.status)
+    return data
   }
 
   return data
