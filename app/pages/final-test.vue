@@ -1669,7 +1669,8 @@ async function runInquiryTest(item: InquiryTestItem) {
       }
       case '16-1': {
         const res = await client.listMessages({ date_from: '2020-11-24', date_to: today, limit: 10, offset: 0 })
-        const list = (res.results as any)?.message_list
+        // e-Gov の結果データは results.information_list (旧コードの message_list は存在せず informationId が常に未設定 → 17-1 が skip)
+        const list = (res.results as any)?.information_list
         if (list?.[0]?.information_id) {
           inquiryState.informationId = list[0].information_id
         }
@@ -1680,7 +1681,8 @@ async function runInquiryTest(item: InquiryTestItem) {
         const infoId = inquiryState.informationId
         if (!infoId) { r.status = 'skip'; r.response = '※最終確認試験用データ情報を参照（e-Govから送付されるお知らせIDが必要）'; break }
         const res = await client.getMessage(infoId)
-        r.response = `title=${(res.results as any)?.message?.title ?? 'N/A'}`
+        // 詳細は results.information.information_title (旧コードの message.title は存在しない)
+        r.response = `title=${(res.results as any)?.information?.information_title ?? 'N/A'}`
         break
       }
       case '18-1': {
