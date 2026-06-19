@@ -1316,6 +1316,85 @@ function firstFinancialName(bankListResult: unknown): string {
   return ''
 }
 
+// 09-1 (再提出) / 10-1 (補正) の ZIP を submitOne の標準形式と同等に構築する。
+// 旧実装は生スケルトンに 初回受付番号/申請種別 を入れるだけで、必須フィールド
+// (氏名/住所/提出先/申請書属性情報) が空のまま送信され e-Gov が 400 を返していた。
+// submitOne の標準充填 (kouseiTestValues + 提出先 + 添付 + 申請書属性情報 + 署名) を再現し、
+// 加えて再提出/補正用の 申請種別 と (再提出のみ) 初回受付番号 をセットする。
+async function buildStandardResubmit(
+  zip: Awaited<ReturnType<typeof JSZip.loadAsync>>,
+  proc: TestProcedure,
+  sk: { results: { configuration_file_name: string[]; file_info: Array<{ form_id: string; form_version: number; form_name: string; apply_file_name: string }> } },
+  applyType: string,
+  initialNo?: string,
+): Promise<void> {
+  const fi0 = sk.results.file_info[0]
+  const vals: Record<string, string> = {
+    受付行政機関ID: '100' + proc.proc_id.substring(0, 3),
+    手続ID: proc.proc_id,
+    手続名称: proc.name,
+    申請種別: applyType,
+    氏名: testData.氏名,
+    氏名フリガナ: testData.氏名フリガナ,
+    郵便番号: testData.郵便番号,
+    住所: testData.住所,
+    住所フリガナ: testData.住所フリガナ,
+    電話番号: testData.電話番号,
+    電子メールアドレス: testData.電子メールアドレス,
+    法人名: testData.法人名,
+  }
+  if (PROCS_WITH_DESTINATION.has(proc.proc_id)) {
+    vals['提出先識別子'] = proc.proc_id.startsWith('950A') ? '950API00000000001001001' : '900API00000000001001001'
+    vals['提出先名称'] = '総務省,行政管理局,API'
+  }
+  for (const cfn of sk.results.configuration_file_name) {
+    const p = `${proc.proc_id}/${cfn}`
+    const f = zip.file(p)
+    if (!f) continue
+    let xml = await f.async('string')
+    for (const [tag, value] of Object.entries(vals)) {
+      xml = xml.replace(new RegExp(`<${tag}/>`, 'g'), `<${tag}>${value}</${tag}>`)
+      xml = xml.replace(new RegExp(`<${tag}></${tag}>`, 'g'), `<${tag}>${value}</${tag}>`)
+    }
+    if (initialNo) {
+      xml = xml.replace(/<初回受付番号\/>/g, `<初回受付番号>${initialNo}</初回受付番号>`)
+      xml = xml.replace(/<初回受付番号><\/初回受付番号>/g, `<初回受付番号>${initialNo}</初回受付番号>`)
+    }
+    // 添付書類: スケルトンに既にある場合は値を埋める / 無く提出先あり手続なら追加 (submitOne と同じ)
+    if (xml.includes('<添付書類属性情報>')) {
+      xml = xml.replace(/<添付種別\/>/g, '<添付種別>添付</添付種別>')
+      xml = xml.replace(/<添付書類ファイル名称\/>/g, '<添付書類ファイル名称>dummy.txt</添付書類ファイル名称>')
+      xml = xml.replace(/<提出情報\/>/g, '<提出情報>1</提出情報>')
+      zip.file(`${proc.proc_id}/dummy.txt`, 'test')
+    } else if (PROCS_WITH_DESTINATION.has(proc.proc_id) && proc.proc_id !== '900A013800001000') {
+      const attachBlock = `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>テスト添付書類１</添付書類名称><添付書類ファイル名称>dummy.txt</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
+      xml = xml.replace('</提出先情報>', '</提出先情報>' + attachBlock)
+      zip.file(`${proc.proc_id}/dummy.txt`, 'test')
+    }
+    if (!xml.includes('<申請書属性情報>') && fi0) {
+      const block = `\n\t\t\t\t<申請書属性情報>\n\t\t\t\t\t<申請書様式ID>${fi0.form_id}</申請書様式ID>\n\t\t\t\t\t<申請書様式バージョン>${String(fi0.form_version).padStart(4, '0')}</申請書様式バージョン>\n\t\t\t\t\t<申請書様式名称>${fi0.form_name}</申請書様式名称>\n\t\t\t\t\t<申請書ファイル名称>${fi0.apply_file_name}</申請書ファイル名称>\n\t\t\t\t</申請書属性情報>`
+      xml = xml.replace('</構成情報>', block + '\n\t\t\t\t</構成情報>')
+    }
+    zip.file(p, xml)
+  }
+  // 署名 (signatureRequired + PFX 読込済み): submitOne 標準形式と同じ署名パス
+  if (pfxLoaded.value && proc.signatureRequired) {
+    for (const cfn of sk.results.configuration_file_name) {
+      const p = `${proc.proc_id}/${cfn}`
+      const f = zip.file(p)
+      if (!f) continue
+      let kx = await f.async('string')
+      const appFiles = new Map<string, string | Uint8Array>()
+      for (const fi of sk.results.file_info) {
+        const af = zip.file(`${proc.proc_id}/${fi.apply_file_name}`)
+        if (af) appFiles.set(fi.apply_file_name, await af.async('string'))
+      }
+      kx = signKouseiXml(kx, appFiles, proc.signatureCount)
+      zip.file(p, kx)
+    }
+  }
+}
+
 async function runInquiryTest(item: InquiryTestItem) {
   const r: InquiryResult = { test_no: item.test_no, status: 'running' }
   inquiryResults.value.set(item.test_no, r)
@@ -1542,37 +1621,11 @@ async function runInquiryTest(item: InquiryTestItem) {
         }
         // 再提出用 ZIP
         const sk09r = await apiFetch<{ results: { file_data: string; configuration_file_name: string[]; file_info: Array<{ form_id: string; form_version: number; form_name: string; apply_file_name: string }> } }>(`/procedure/${procId09}`)
+        if (!proc09) throw new Error('手続 900A020700013000 not found')
         const zipData09r = Uint8Array.from(atob(sk09r.results.file_data), c => c.charCodeAt(0))
         const zip09r = await JSZip.loadAsync(zipData09r)
-        for (const cfn of sk09r.results.configuration_file_name) {
-          const p = `${procId09}/${cfn}`
-          const f = zip09r.file(p)
-          if (f) {
-            let xml = await f.async('string')
-            xml = xml.replace(/<初回受付番号\/>/g, `<初回受付番号>${aid09}</初回受付番号>`)
-            xml = xml.replace(/<初回受付番号><\/初回受付番号>/g, `<初回受付番号>${aid09}</初回受付番号>`)
-            xml = xml.replace(/<申請種別\/>/g, '<申請種別>再提出</申請種別>')
-            xml = xml.replace(/<申請種別><\/申請種別>/g, '<申請種別>再提出</申請種別>')
-            zip09r.file(p, xml)
-          }
-        }
-        // 署名: 本手続は signatureRequired (signatureCount=3)。PFX 読込済みなら kousei を
-        // 署名する。未署名だと e-Gov が 400 (UNKNOWN) を返す (submitOne 標準形式と同じ署名)。
-        if (pfxLoaded.value && proc09 && proc09.signatureRequired) {
-          for (const cfn of sk09r.results.configuration_file_name) {
-            const sp = `${procId09}/${cfn}`
-            const sf = zip09r.file(sp)
-            if (!sf) continue
-            let kx = await sf.async('string')
-            const appFiles = new Map<string, string | Uint8Array>()
-            for (const fi of sk09r.results.file_info) {
-              const af = zip09r.file(`${procId09}/${fi.apply_file_name}`)
-              if (af) appFiles.set(fi.apply_file_name, await af.async('string'))
-            }
-            kx = signKouseiXml(kx, appFiles, proc09.signatureCount)
-            zip09r.file(sp, kx)
-          }
-        }
+        // submitOne 同等の充填 (氏名/住所/提出先/申請書属性情報/添付) + 申請種別=再提出 + 初回受付番号 + 署名
+        await buildStandardResubmit(zip09r, proc09, sk09r, '再提出', aid09)
         const base64_09r = await zip09r.generateAsync({ type: 'base64' })
         const res09 = await client.submitApplication({ proc_id: procId09, send_file: { file_name: `${procId09}.zip`, file_data: base64_09r } })
         r.response = `arrive_id=${res09.results.arrive_id} (初回=${aid09})`
@@ -1590,35 +1643,12 @@ async function runInquiryTest(item: InquiryTestItem) {
           r.error = `${aid10} status=${detail10.results.status}（補正待ちではない。sandbox遷移後に再実行）`
           break
         }
+        if (!proc10) throw new Error('手続 900A020700013000 not found')
         const sk10 = await apiFetch<{ results: { file_data: string; configuration_file_name: string[]; file_info: Array<{ form_id: string; form_version: number; form_name: string; apply_file_name: string }> } }>(`/procedure/${procId10}`)
         const zipData10 = Uint8Array.from(atob(sk10.results.file_data), c => c.charCodeAt(0))
         const zip10 = await JSZip.loadAsync(zipData10)
-        for (const cfn of sk10.results.configuration_file_name) {
-          const p = `${procId10}/${cfn}`
-          const f = zip10.file(p)
-          if (f) {
-            let xml = await f.async('string')
-            xml = xml.replace(/<申請種別\/>/g, '<申請種別>補正</申請種別>')
-            xml = xml.replace(/<申請種別><\/申請種別>/g, '<申請種別>補正</申請種別>')
-            zip10.file(p, xml)
-          }
-        }
-        // 署名: 09-1 と同様、署名必須手続なので補正 ZIP も署名する (未署名だと 400)。
-        if (pfxLoaded.value && proc10 && proc10.signatureRequired) {
-          for (const cfn of sk10.results.configuration_file_name) {
-            const sp = `${procId10}/${cfn}`
-            const sf = zip10.file(sp)
-            if (!sf) continue
-            let kx = await sf.async('string')
-            const appFiles = new Map<string, string | Uint8Array>()
-            for (const fi of sk10.results.file_info) {
-              const af = zip10.file(`${procId10}/${fi.apply_file_name}`)
-              if (af) appFiles.set(fi.apply_file_name, await af.async('string'))
-            }
-            kx = signKouseiXml(kx, appFiles, proc10.signatureCount)
-            zip10.file(sp, kx)
-          }
-        }
+        // submitOne 同等の充填 + 申請種別=補正 + 初回受付番号 + 署名 (amendApplication が arrive_id を運ぶ)
+        await buildStandardResubmit(zip10, proc10, sk10, '補正', aid10)
         const base64_10 = await zip10.generateAsync({ type: 'base64' })
         const res10 = await client.amendApplication({ arrive_id: aid10, send_file: { file_name: `${procId10}.zip`, file_data: base64_10 } })
         r.response = `arrive_id=${res10.results.arrive_id}`
