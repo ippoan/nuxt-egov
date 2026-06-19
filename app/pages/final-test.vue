@@ -2306,6 +2306,20 @@ function b64ToBytes(b64: string): Uint8Array {
   return bytes
 }
 
+// capturedAt (ISO/UTC) を成績書の実施日時形式 'yyyy/mm/dd hh:mm' (JST) に整形。
+function fmtJst(iso: string | undefined): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  const date = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(d).replace(/-/g, '/')
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(d)
+  return `${date} ${time}`
+}
+
 function evidence01Txt(call: EvidenceCall): string {
   const lines: string[] = [`${call.method} ${call.egovUrl}`, '', '[HTTP Headers]']
   for (const [k, v] of Object.entries(call.requestHeaders)) lines.push(`${k}: ${v}`)
@@ -2373,6 +2387,7 @@ async function exportSubmissionZip() {
   const root = zip.folder(`${softwareId}_${receiptNo}`)!
   let included = 0
   const skipped: string[] = []
+  const jissiRows: string[] = [] // 成績書 実施日時 転記用 (試験No \t yyyy/mm/dd hh:mm)
 
   for (const t of INQUIRY_TESTS) {
     if (t.needsGbizId) continue // 情報共有テストは申請しない (GビズID未取得)
@@ -2384,7 +2399,10 @@ async function exportSubmissionZip() {
     }
     const folder = root.folder(`${softwareId}_${t.test_no}`)!
     const primary = ev[ev.length - 1]! // 当該テスト本体の呼び出し (末尾が primary)
-    folder.file(`${softwareId}_${t.test_no}_01.txt`, evidence01Txt(primary))
+    // 実施日時 = テスト開始時刻 = 最初の呼び出しの capturedAt (成績書 ② 用)
+    const jissi = fmtJst(ev[0]!.capturedAt)
+    jissiRows.push(`${t.test_no}\t${jissi}`)
+    folder.file(`${softwareId}_${t.test_no}_01.txt`, `実施日時: ${jissi}\n\n${evidence01Txt(primary)}`)
     folder.file(`${softwareId}_${t.test_no}_02.txt`, evidence02Txt(primary))
     // 複数呼び出し (自動検出の前段など) がある場合は全レスポンスを連結して残す
     const resp =
@@ -2427,6 +2445,9 @@ async function exportSubmissionZip() {
       .filter(Boolean)
       .join('\n'),
   )
+
+  // 成績書 3_テスト項目シートの「実施日時」列へ転記するための一覧 (試験No → JST)
+  zip.file('実施日時一覧.tsv', `試験No\t実施日時(JST)\n${jissiRows.join('\n')}\n`)
 
   const bodies = buildMailBodies(softwareId, receiptNo)
   zip.file('メール本文_成績書.txt', `件名: ${bodies.gradeSubject}\n\n${bodies.gradeBody}\n`)
