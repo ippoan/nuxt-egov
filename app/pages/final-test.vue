@@ -357,6 +357,32 @@ function getResult(procId: string): ProcedureResult {
 // submitOne が直近に生成した申請データ ZIP (base64) を proc_id 別に保持 (07-1/07-2 の _04.ZIP 用)
 const lastSentZip: Record<string, string> = {}
 
+// submitOne が ProcedureResult に保存した /apply 応答エビデンスを、照会テストの capture buffer に
+// 転記する (07-1/07-2 は submitOne 経由で送信するため、case 側で別途記録しないと _03 が
+// 「手続選択」スケルトン応答のままになる)。
+function pushApplyEvidence(res: ProcedureResult | undefined): void {
+  const ev = res?.evidence
+  if (!ev) return
+  pushEvidence({
+    egovUrl: ev.egovUrl,
+    method: ev.method,
+    requestHeaders: ev.requestHeaders,
+    requestBody: ev.requestBodyAbbrev,
+    response: ev.response,
+    httpStatus: ev.httpStatus,
+    capturedAt: ev.capturedAt,
+  })
+}
+
+// 手続ごとの必須添付書類 (作業手順で指定されるもの)。07-2 (添付あり) は 2 件必須。
+// ※添付ファイルの中身は任意 (実施者作成)。ここではダミーバイト列を入れる。
+const REQUIRED_ATTACHMENTS: Record<string, Array<{ docName: string; fileName: string }>> = {
+  '950A010700006000': [
+    { docName: 'テスト添付書類１', fileName: '最終確認試験用添付１.pdf' },
+    { docName: 'テスト添付書類２', fileName: '最終確認試験用添付２.doc' },
+  ],
+}
+
 async function submitOne(proc: TestProcedure, clearLog = false) {
   if (clearLog) errorLog.value = ''
   const r: ProcedureResult = { proc_id: proc.proc_id, status: 'skeleton' }
@@ -578,8 +604,17 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
             xml = xml.replace(/<提出情報\/>/g, '<提出情報>1</提出情報>')
             zip.file(`${proc.proc_id}/${dummyFileName}`, 'test')
           }
-          // 添付書類属性情報がスケルトンに無い場合: 提出先ありかつ電子送達でない手続のみ追加
-          if (!xml.includes('<添付書類属性情報>') && PROCS_WITH_DESTINATION.has(proc.proc_id) && proc.proc_id !== '900A013800001000') {
+          // 添付書類属性情報がスケルトンに無い場合の追加。
+          // (a) 手続に必須添付が定義されていれば、その全件を属性情報＋実体ファイルで追加 (07-2 添付あり = 2 件)。
+          // (b) それ以外は従来どおり 提出先ありかつ電子送達でない手続に dummy.txt を 1 件。
+          if (!xml.includes('<添付書類属性情報>') && REQUIRED_ATTACHMENTS[proc.proc_id]) {
+            let blocks = ''
+            for (const a of REQUIRED_ATTACHMENTS[proc.proc_id]!) {
+              blocks += `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>${a.docName}</添付書類名称><添付書類ファイル名称>${a.fileName}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
+              zip.file(`${proc.proc_id}/${a.fileName}`, 'test attachment')
+            }
+            xml = xml.replace('</提出先情報>', '</提出先情報>' + blocks)
+          } else if (!xml.includes('<添付書類属性情報>') && PROCS_WITH_DESTINATION.has(proc.proc_id) && proc.proc_id !== '900A013800001000') {
             const dummyFileName = 'dummy.txt'
             const attachBlock = `<添付書類属性情報><添付種別>添付</添付種別><添付書類名称>テスト添付書類１</添付書類名称><添付書類ファイル名称>${dummyFileName}</添付書類ファイル名称><提出情報>1</提出情報></添付書類属性情報>`
             xml = xml.replace('</提出先情報>', '</提出先情報>' + attachBlock)
@@ -1739,6 +1774,7 @@ async function runInquiryTest(item: InquiryTestItem) {
         await submitOne(proc071)
         if (lastSentZip[proc071.proc_id]) inquiryState['zip_07-1'] = lastSentZip[proc071.proc_id]! // _04.ZIP
         const res071 = results.value.get(proc071.proc_id)
+        pushApplyEvidence(res071) // /apply 応答 (arrive_id) を _03 エビデンスに記録
         if (res071?.status === 'done') {
           inquiryState.arriveId_07_1 = res071.arrive_id!
           r.response = `arrive_id=${res071.arrive_id}`
@@ -1754,6 +1790,7 @@ async function runInquiryTest(item: InquiryTestItem) {
         await submitOne(proc072)
         if (lastSentZip[proc072.proc_id]) inquiryState['zip_07-2'] = lastSentZip[proc072.proc_id]! // _04.ZIP
         const res072 = results.value.get(proc072.proc_id)
+        pushApplyEvidence(res072) // /apply 応答 (arrive_id) を _03 エビデンスに記録
         if (res072?.status === 'done') {
           inquiryState.arriveId_07_2 = res072.arrive_id!
           r.response = `arrive_id=${res072.arrive_id}`
@@ -1763,20 +1800,35 @@ async function runInquiryTest(item: InquiryTestItem) {
         break
       }
       case '08-1': {
-        // bulk送信（正常）— 2件分のZIPをまとめて送信
-        const proc081 = TEST_PROCEDURES.find(p => p.proc_id === '950A010700005000')
-        if (!proc081) throw new Error('手続 not found')
-        const skeleton081 = await apiFetch<{ results: { file_data: string; configuration_file_name: string[]; file_info: Array<{ form_id: string; form_version: number; form_name: string; apply_file_name: string }> } }>(`/procedure/${proc081.proc_id}`)
-        // ZIP構築（簡易版 — Trial送信）
-        const zipData081 = Uint8Array.from(atob(skeleton081.results.file_data), c => c.charCodeAt(0))
-        const zip081 = await JSZip.loadAsync(zipData081)
-        const bulkBase64 = await zip081.generateAsync({ type: 'base64' })
+        // bulk送信（正常）— 作業手順: 07-1 と 07-2 で送信した申請データ (2 子フォルダ) をまとめて送信。
+        let bulkBase64: string
+        const z071 = inquiryState['zip_07-1']
+        const z072 = inquiryState['zip_07-2']
+        if (z071 && z072) {
+          // 2 案件の {proc_id}/ フォルダを 1 つの ZIP にマージ
+          const merged = new JSZip()
+          for (const src of [z071, z072]) {
+            const zsrc = await JSZip.loadAsync(src, { base64: true })
+            for (const [name, file] of Object.entries(zsrc.files)) {
+              if (!file.dir) merged.file(name, await file.async('uint8array'))
+            }
+          }
+          bulkBase64 = await merged.generateAsync({ type: 'base64' })
+        } else {
+          // フォールバック: 07-1/07-2 未実行時は単一スケルトン (従来挙動)
+          const proc081 = TEST_PROCEDURES.find(p => p.proc_id === '950A010700005000')
+          if (!proc081) throw new Error('手続 not found')
+          const sk081 = await apiFetch<{ results: { file_data: string } }>(`/procedure/${proc081.proc_id}`)
+          const zd081 = Uint8Array.from(atob(sk081.results.file_data), c => c.charCodeAt(0))
+          bulkBase64 = await (await JSZip.loadAsync(zd081)).generateAsync({ type: 'base64' })
+        }
         inquiryState['zip_08-1'] = bulkBase64 // _04.ZIP
         const bulkRes = await $fetch<{ results: { send_number: string } }>('/api/egov/bulk-apply', {
           method: 'POST',
           body: { send_file: { file_name: 'bulk.zip', file_data: bulkBase64 } },
           headers: { Authorization: `Bearer ${useEgovAuth().accessToken.value}` },
         })
+        pushEvidence({ egovUrl: `${EGOV_API_BASE}/bulk-apply`, method: 'POST', requestHeaders: { 'Content-Type': 'application/json', Authorization: 'Bearer ****(masked)' }, requestBody: { send_file: { file_name: 'bulk.zip', file_data: '(base64 — 申請データは _04.ZIP)' } }, response: bulkRes, httpStatus: 202, capturedAt: new Date().toISOString() })
         inquiryState.sendNumber_08_1 = bulkRes.results.send_number
         r.response = `send_number=${bulkRes.results.send_number}`
         break
@@ -1806,6 +1858,7 @@ async function runInquiryTest(item: InquiryTestItem) {
           body: { send_file: { file_name: 'bulk-error.zip', file_data: bulkBase64_082 } },
           headers: { Authorization: `Bearer ${useEgovAuth().accessToken.value}` },
         })
+        pushEvidence({ egovUrl: `${EGOV_API_BASE}/bulk-apply`, method: 'POST', requestHeaders: { 'Content-Type': 'application/json', Authorization: 'Bearer ****(masked)' }, requestBody: { send_file: { file_name: 'bulk-error.zip', file_data: '(base64 — 申請データは _04.ZIP)' } }, response: bulkRes082, httpStatus: 202, capturedAt: new Date().toISOString() })
         inquiryState.sendNumber_08_2 = bulkRes082.results.send_number
         r.response = `send_number=${bulkRes082.results.send_number}`
         break
@@ -2419,7 +2472,15 @@ async function exportSubmissionZip() {
     if (t.needsGbizId) continue // 情報共有テストは申請しない (GビズID未取得)
     const r = getInquiryResult(t.test_no)
     const ev = r.evidence
-    if (!ev || ev.length === 0) {
+    // pass 以外 (skip / error / 未実行) は、誤解を招く自動検出エビデンスを入れず、
+    // フォルダに skipped.txt を置いて「未実施」を明示する (09-1/10-1 等)。
+    if (r.status !== 'pass' || !ev || ev.length === 0) {
+      const folder = root.folder(`${softwareId}_${t.test_no}`)!
+      const reason = r.status === 'skip' ? (r.response || r.error || '準備データ待ちのため未実施')
+        : r.status === 'error' ? `エラー: ${r.error || '不明'}`
+        : '未実行'
+      folder.file(`${softwareId}_${t.test_no}_skipped.txt`,
+        `この試験 (${t.test_no} ${t.api_name}) は未実施です。\n状態: ${r.status}\n理由: ${reason}\n`)
       skipped.push(t.test_no)
       continue
     }
