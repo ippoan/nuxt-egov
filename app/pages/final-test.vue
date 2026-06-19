@@ -1300,6 +1300,22 @@ function savePreparedIds() {
 
 const today = new Date().toISOString().slice(0, 10)
 
+// 22-1 (納付取扱金融機関一覧) の bank_list はカテゴリ別 (trust_bank / shinkin_bank /
+// credit_union / norinchukin_bank / labour_bank) の入れ子で、各 grp.bank[].financial_name に
+// 銀行名が入る (旧コードが読んでいた flat な bank_list[].bank_name は存在しない)。
+// 24-1 (displayPaymentSite) の bank_name には実在の financial_name が要る (仮値だと 400)。
+function firstFinancialName(bankListResult: unknown): string {
+  const cats = (bankListResult as { bank_list?: Record<string, Array<{ bank?: Array<{ financial_name?: string }> }>> })?.bank_list ?? {}
+  for (const cat of Object.values(cats)) {
+    for (const grp of cat ?? []) {
+      for (const b of grp.bank ?? []) {
+        if (b.financial_name && b.financial_name !== 'NULL') return b.financial_name
+      }
+    }
+  }
+  return ''
+}
+
 async function runInquiryTest(item: InquiryTestItem) {
   const r: InquiryResult = { test_no: item.test_no, status: 'running' }
   inquiryResults.value.set(item.test_no, r)
@@ -1318,21 +1334,24 @@ async function runInquiryTest(item: InquiryTestItem) {
   }
   const client = getClient()
 
-  // 09-1/10-1 (再提出/補正) は補正待ち案件の到達番号 (arriveId_09_base) が要る。手動入力
-  // (テストデータ設定) が未設定なら、通知一覧 (type=補正) から「審査中（補正待ち）」の案件を
-  // 自動検出して補完する。補正待ち案件が無ければ補完されず従来通り skip。(refresh 後に実行)
-  if ((item.test_no === '09-1' || item.test_no === '10-1') && !inquiryState.arriveId_09_base) {
+  // 09-1/10-1 (再提出/補正) は補正待ち案件の到達番号 (arriveId_09_base) が要る。通知一覧
+  // (type=補正) から「審査中（補正待ち）」の案件を自動検出し、arriveId_09_base が未設定
+  // または現在値が補正待ち案件でない (SDK state / 古い保存値による stale) 場合に上書きする。
+  // 手動入力した値が実際の補正待ち案件なら検出 set に含まれるので上書きされない。補正待ち
+  // 案件が無ければ補完されず従来通り skip。(token refresh 後に実行)
+  if (item.test_no === '09-1' || item.test_no === '10-1') {
     try {
       const nl = await client.listNotices({ date_from: '2020-11-24', date_to: today, limit: 50, offset: 0 })
       const hoseiList = ((nl.results as any)?.notice_list ?? []).filter((n: { type?: string }) => n.type === '補正')
+      const hoseiArriveIds: string[] = []
       for (const h of hoseiList as Array<{ arrive_id: string }>) {
         const detail = await client.getApplication(h.arrive_id)
-        if (detail.results.status?.includes('補正待ち')) {
-          inquiryState.arriveId_09_base = h.arrive_id
-          break
-        }
+        if (detail.results.status?.includes('補正待ち')) hoseiArriveIds.push(h.arrive_id)
       }
-    } catch { /* 自動検出失敗時は補完せず、下の gate で従来通り skip させる */ }
+      if (hoseiArriveIds.length && !hoseiArriveIds.includes(inquiryState.arriveId_09_base ?? '')) {
+        inquiryState.arriveId_09_base = hoseiArriveIds[0]!
+      }
+    } catch { /* 自動検出失敗時は既存値のまま (下の gate / case 内で skip 判定) */ }
   }
 
   // 準備データ (e-Gov 送付の到達番号/通番等) が「テストデータ設定」に入力済みなら走らせる。
@@ -1775,9 +1794,9 @@ async function runInquiryTest(item: InquiryTestItem) {
       }
       case '22-1': {
         const res = await client.listPaymentBanks()
-        const banks = (res.results as any)?.bank_list
-        if (banks?.[0]?.bank_name) inquiryState.bankName = banks[0].bank_name
-        r.response = `banks=${banks?.length ?? 'N/A'}`
+        const name = firstFinancialName(res.results)
+        if (name) inquiryState.bankName = name
+        r.response = name ? `bank=${name}` : 'bank_list 空'
         break
       }
       case '23-1': {
@@ -1796,11 +1815,17 @@ async function runInquiryTest(item: InquiryTestItem) {
         }
         const res = await client.getPaymentInfo(inquiryState.payArriveId)
         const pay = (res.results as any)
-        if (pay?.proc_id) inquiryState.paymentProcId = pay.proc_id
+        // payment 応答に proc_id は無い (results は arrive_id/proc_name/apply_pay_list のみ)。
+        // displayPaymentSite (24-1) には納付手続そのものの proc_id を渡す。
+        inquiryState.paymentProcId = payProc.proc_id
         if (pay?.apply_pay_list?.[0]?.pay_number) {
           inquiryState.paymentNumber = pay.apply_pay_list[0].pay_number
         }
-        if (!inquiryState.bankName) inquiryState.bankName = 'テスト銀行'
+        // 24-1 には実在の financial_name が要る。22-1 未実行で未設定なら自前で取得する。
+        if (!inquiryState.bankName) {
+          try { inquiryState.bankName = firstFinancialName((await client.listPaymentBanks()).results) }
+          catch { /* 取得失敗時は 24-1 側の gate に委ねる */ }
+        }
         r.response = JSON.stringify(res.results).substring(0, 200)
         break
       }
