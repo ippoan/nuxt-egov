@@ -1303,8 +1303,37 @@ const today = new Date().toISOString().slice(0, 10)
 async function runInquiryTest(item: InquiryTestItem) {
   const r: InquiryResult = { test_no: item.test_no, status: 'running' }
   inquiryResults.value.set(item.test_no, r)
-  const client = getClient()
   const start = Date.now()
+
+  // 認証が要るテストの前に access token を強制 refresh して確実に有効化する。
+  // isAuthenticated は client 側の tokenExpiresAt しか見ず、サーバ側失効 (logout や
+  // e-Gov の早期失効) を検知できないため、死んだ token のまま 27-1 等が 500 になる
+  // (apiFetch の自動 refresh も isAuthenticated=true だと走らない)。毎回 refresh で
+  // revive する。03-1=refresh 自体 / 04-1,04-2=03-1 発行 token の検証 / 25-1=logout /
+  // 26-1=logout後検証 は session を意図的に操作するので除外する。
+  const SESSION_SEMANTIC = new Set(['03-1', '04-1', '04-2', '25-1', '26-1'])
+  if (!SESSION_SEMANTIC.has(item.test_no)) {
+    try { await useEgovAuth().refreshAccessToken() }
+    catch { /* refresh 不可時 (refresh_token 失効等) は素のエラー挙動に任せる */ }
+  }
+  const client = getClient()
+
+  // 09-1/10-1 (再提出/補正) は補正待ち案件の到達番号 (arriveId_09_base) が要る。手動入力
+  // (テストデータ設定) が未設定なら、通知一覧 (type=補正) から「審査中（補正待ち）」の案件を
+  // 自動検出して補完する。補正待ち案件が無ければ補完されず従来通り skip。(refresh 後に実行)
+  if ((item.test_no === '09-1' || item.test_no === '10-1') && !inquiryState.arriveId_09_base) {
+    try {
+      const nl = await client.listNotices({ date_from: '2020-11-24', date_to: today, limit: 50, offset: 0 })
+      const hoseiList = ((nl.results as any)?.notice_list ?? []).filter((n: { type?: string }) => n.type === '補正')
+      for (const h of hoseiList as Array<{ arrive_id: string }>) {
+        const detail = await client.getApplication(h.arrive_id)
+        if (detail.results.status?.includes('補正待ち')) {
+          inquiryState.arriveId_09_base = h.arrive_id
+          break
+        }
+      }
+    } catch { /* 自動検出失敗時は補完せず、下の gate で従来通り skip させる */ }
+  }
 
   // 準備データ (e-Gov 送付の到達番号/通番等) が「テストデータ設定」に入力済みなら走らせる。
   // 未入力時のみ skip。これで全 skip 項目が、データを入れれば実行・evidence 取得できる。
@@ -1322,18 +1351,6 @@ async function runInquiryTest(item: InquiryTestItem) {
     inquiryResults.value.set(item.test_no, { ...r })
     saveInquiryResults()
     return
-  }
-
-  // 認証が要るテストの前に access token を強制 refresh して確実に有効化する。
-  // isAuthenticated は client 側の tokenExpiresAt しか見ず、サーバ側失効 (logout や
-  // e-Gov の早期失効) を検知できないため、死んだ token のまま 27-1 等が 500 になる
-  // (apiFetch の自動 refresh も isAuthenticated=true だと走らない)。毎回 refresh で
-  // revive する。03-1=refresh 自体 / 04-1,04-2=03-1 発行 token の検証 / 25-1=logout /
-  // 26-1=logout後検証 は session を意図的に操作するので除外する。
-  const SESSION_SEMANTIC = new Set(['03-1', '04-1', '04-2', '25-1', '26-1'])
-  if (!SESSION_SEMANTIC.has(item.test_no)) {
-    try { await useEgovAuth().refreshAccessToken() }
-    catch { /* refresh 不可時 (refresh_token 失効等) は素のエラー挙動に任せる */ }
   }
 
   beginCapture()
