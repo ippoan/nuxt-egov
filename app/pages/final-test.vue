@@ -1808,11 +1808,13 @@ async function runInquiryTest(item: InquiryTestItem) {
         break
       }
       case '29-1': {
-        // ※開始日は最終試験開始日を、終了日は現在日を指定すること
-        const res = await client.listPostDeliveries({ date_from: today, date_to: today, limit: 10, offset: 0 })
+        // ※開始日は最終試験開始日を、終了日は現在日を指定すること (today 固定だと過去の電子送達を取り逃す)
+        const res = await client.listPostDeliveries({ date_from: '2020-11-24', date_to: today, limit: 10, offset: 0 })
         const list = (res.results as any)?.post_list
-        if (list?.[0]?.post_id) {
-          inquiryState.postId_29_1 = list[0].post_id
+        // post_id は post_list[0].notice_data_list[0].post_id にネストしている (top-level の post_id は存在しない)
+        const pid = list?.[0]?.notice_data_list?.[0]?.post_id ?? list?.[0]?.post_id
+        if (pid) {
+          inquiryState.postId_29_1 = pid
         }
         r.response = `count=${res.resultset?.count ?? 'N/A'}`
         break
