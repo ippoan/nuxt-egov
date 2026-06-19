@@ -1324,6 +1324,18 @@ async function runInquiryTest(item: InquiryTestItem) {
     return
   }
 
+  // 認証が要るテストの前に access token を強制 refresh して確実に有効化する。
+  // isAuthenticated は client 側の tokenExpiresAt しか見ず、サーバ側失効 (logout や
+  // e-Gov の早期失効) を検知できないため、死んだ token のまま 27-1 等が 500 になる
+  // (apiFetch の自動 refresh も isAuthenticated=true だと走らない)。毎回 refresh で
+  // revive する。03-1=refresh 自体 / 04-1,04-2=03-1 発行 token の検証 / 25-1=logout /
+  // 26-1=logout後検証 は session を意図的に操作するので除外する。
+  const SESSION_SEMANTIC = new Set(['03-1', '04-1', '04-2', '25-1', '26-1'])
+  if (!SESSION_SEMANTIC.has(item.test_no)) {
+    try { await useEgovAuth().refreshAccessToken() }
+    catch { /* refresh 不可時 (refresh_token 失効等) は素のエラー挙動に任せる */ }
+  }
+
   beginCapture()
   try {
     switch (item.test_no) {
@@ -1931,7 +1943,13 @@ async function runInquiryTest(item: InquiryTestItem) {
 async function runAllInquiry() {
   inquiryRunning.value = true
   inquiryProgress.value = 0
-  const tests = INQUIRY_TESTS.filter(t => !t.needsGbizId && getInquiryResult(t.test_no).status !== 'pass')
+  // ログアウト系 (25-1=ログアウト / 26-1=ログアウト後検証) は session を無効化するので
+  // 必ず最後に実行する。配列順のまま走らせると 25-1 で session が切れ、後続の電子送達
+  // (27-1〜) / 情報共有 (32-1〜) が token 切れで全滅する (stable sort で末尾へ寄せる)。
+  const LOGOUT_LAST = new Set(['25-1', '26-1'])
+  const tests = INQUIRY_TESTS
+    .filter(t => !t.needsGbizId && getInquiryResult(t.test_no).status !== 'pass')
+    .sort((a, b) => (LOGOUT_LAST.has(a.test_no) ? 1 : 0) - (LOGOUT_LAST.has(b.test_no) ? 1 : 0))
   for (let i = 0; i < tests.length; i++) {
     await runInquiryTest(tests[i]!)
     inquiryProgress.value = Math.round(((i + 1) / tests.length) * 100)
