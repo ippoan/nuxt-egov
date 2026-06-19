@@ -2275,6 +2275,186 @@ function resetInquiry() {
   localStorage.removeItem('egov_error_log')
 }
 
+// ===== e-Gov 最終確認試験 提出物 (規約準拠 ZIP + メール本文) =====
+// 仕様: spec/final_confirmation_test_specification_grades_v2/最終試験確認の流れ.md
+//   テスト結果格納フォルダ: {ソフトウェアID}_{受付番号}
+//     └ {ソフトウェアID}_{試験No}/
+//         ├ _01.txt (リクエスト URL+HTTPヘッダ部)
+//         ├ _02.txt (リクエスト HTTPボディ部)
+//         ├ _03.txt (レスポンス / リダイレクトURL)
+//         └ _04.ZIP (添付: 申請データ/補正/公文書 等、ある場合のみ)
+// 情報共有テスト (32-1〜36-1, needsGbizId) は検証用GビズID未取得のため除外する。
+const submissionSoftwareId = ref('')
+const submissionReceiptNo = ref('TID_202604130039')
+const mailPreview = ref('')
+
+onMounted(() => {
+  const rc = useRuntimeConfig()
+  submissionSoftwareId.value =
+    localStorage.getItem('egov_submission_software_id') || (rc.public.egovClientId as string) || ''
+  submissionReceiptNo.value =
+    localStorage.getItem('egov_submission_receipt_no') || 'TID_202604130039'
+})
+
+watch(submissionSoftwareId, (v) => localStorage.setItem('egov_submission_software_id', v))
+watch(submissionReceiptNo, (v) => localStorage.setItem('egov_submission_receipt_no', v))
+
+function b64ToBytes(b64: string): Uint8Array {
+  const binary = atob(b64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
+
+function evidence01Txt(call: EvidenceCall): string {
+  const lines: string[] = [`${call.method} ${call.egovUrl}`, '', '[HTTP Headers]']
+  for (const [k, v] of Object.entries(call.requestHeaders)) lines.push(`${k}: ${v}`)
+  return lines.join('\n') + '\n'
+}
+
+function evidence02Txt(call: EvidenceCall): string {
+  if (call.requestBody === undefined || call.requestBody === null) return '(リクエストボディなし)\n'
+  const b = typeof call.requestBody === 'string' ? call.requestBody : JSON.stringify(call.requestBody, null, 2)
+  return b + '\n'
+}
+
+function evidence03Txt(call: EvidenceCall): string {
+  const r = typeof call.response === 'string' ? call.response : JSON.stringify(call.response, null, 2)
+  return `HTTP Status: ${call.httpStatus}\n\n${r}\n`
+}
+
+function buildMailBodies(softwareId: string, receiptNo: string) {
+  const zipName = `最終確認試験テスト結果_${softwareId}_${receiptNo}_01.ZIP`
+  const gradeSubject = '最終確認試験結果の提出 (成績書) (1／1)'
+  const gradeBody = [
+    'e-Gov 電子申請API ご担当者 様',
+    '',
+    'お世話になっております。',
+    '最終確認試験の結果（成績書およびエビデンス）を提出いたします。',
+    '',
+    `・ソフトウェアID: ${softwareId}`,
+    `・最終確認試験受付番号: ${receiptNo}`,
+    '・送付: 1／1通目',
+    '',
+    '添付:',
+    `・${zipName}（パスワード付き）`,
+    '　- 最終確認試験テスト仕様書兼成績書（final_confirmation_test_specification_grades_v2.xlsx）',
+    `　- テスト結果格納フォルダ ${softwareId}_${receiptNo}`,
+    '',
+    '※ アカウント間情報共有（試験No.32-1〜36-1）は、検証用GビズID未取得のため本提出の対象外としています。',
+    '',
+    '解凍パスワードは別メール「最終確認試験結果の提出 (パスワード)」にてお送りいたします。',
+    '',
+    'よろしくお願いいたします。',
+  ].join('\n')
+  const pwSubject = '最終確認試験結果の提出 (パスワード)'
+  const pwBody = [
+    'e-Gov 電子申請API ご担当者 様',
+    '',
+    'お世話になっております。',
+    '先のメールにて送付いたしました最終確認試験結果ZIPの解凍パスワードをお知らせいたします。',
+    '',
+    `・添付ファイル: ${zipName}`,
+    '・解凍パスワード: ********（送付前にこの欄を実際のパスワードに置き換えてください）',
+    '',
+    'よろしくお願いいたします。',
+  ].join('\n')
+  return { gradeSubject, gradeBody, pwSubject, pwBody }
+}
+
+async function exportSubmissionZip() {
+  const softwareId = submissionSoftwareId.value.trim()
+  const receiptNo = submissionReceiptNo.value.trim()
+  if (!softwareId || !receiptNo) {
+    alert('ソフトウェアID と 最終確認試験受付番号 を入力してください。')
+    return
+  }
+  const zip = new JSZip()
+  const root = zip.folder(`${softwareId}_${receiptNo}`)!
+  let included = 0
+  const skipped: string[] = []
+
+  for (const t of INQUIRY_TESTS) {
+    if (t.needsGbizId) continue // 情報共有テストは申請しない (GビズID未取得)
+    const r = getInquiryResult(t.test_no)
+    const ev = r.evidence
+    if (!ev || ev.length === 0) {
+      skipped.push(t.test_no)
+      continue
+    }
+    const folder = root.folder(`${softwareId}_${t.test_no}`)!
+    const primary = ev[ev.length - 1]! // 当該テスト本体の呼び出し (末尾が primary)
+    folder.file(`${softwareId}_${t.test_no}_01.txt`, evidence01Txt(primary))
+    folder.file(`${softwareId}_${t.test_no}_02.txt`, evidence02Txt(primary))
+    // 複数呼び出し (自動検出の前段など) がある場合は全レスポンスを連結して残す
+    const resp =
+      ev.length > 1
+        ? ev.map((c, i) => `=== 呼び出し ${i + 1}/${ev.length}: ${c.method} ${c.egovUrl} ===\n${evidence03Txt(c)}`).join('\n')
+        : evidence03Txt(primary)
+    folder.file(`${softwareId}_${t.test_no}_03.txt`, resp)
+    // _04.ZIP: テストデータ添付 (公文書 19-1 / 電子送達 30-1 は取得した ZIP を同梱)
+    if (t.test_no === '19-1' && inquiryState.officialDocFileData) {
+      folder.file(`${softwareId}_${t.test_no}_04.ZIP`, b64ToBytes(inquiryState.officialDocFileData))
+    }
+    if (t.test_no === '30-1' && inquiryState.postDocFileData) {
+      folder.file(`${softwareId}_${t.test_no}_04.ZIP`, b64ToBytes(inquiryState.postDocFileData))
+    }
+    included++
+  }
+
+  // 提出手順メモ (JSZip は暗号化ZIPを作れないので、パスワード付き再圧縮は手動)
+  root.file(
+    '_提出手順.txt',
+    [
+      '【最終確認試験 結果提出 手順】',
+      '',
+      `ソフトウェアID: ${softwareId}`,
+      `最終確認試験受付番号: ${receiptNo}`,
+      '',
+      '1. このフォルダ (テスト結果格納フォルダ) に、記入済みの成績書',
+      '   「final_confirmation_test_specification_grades_v2.xlsx」を加える。',
+      '2. 両方をまとめて【パスワード付き】ZIP に再圧縮する。',
+      `   ファイル名: 最終確認試験テスト結果_${softwareId}_${receiptNo}_01.ZIP`,
+      '   ※ ブラウザ生成のこのZIPは平文。パスワードは 7-Zip / OS の暗号化ZIP機能で付与する。',
+      '3. 5MBを超える場合は 5MB以下になるよう分割し、末尾連番 _02, _03... を繰り上げる。',
+      '4. メール送付 (件名/本文は同梱の「メール本文_*.txt」参照):',
+      '   - 1通目: 成績書 (1／総数)  添付 = 上記ZIP',
+      '   - 最終: パスワード通知メール (解凍パスワードのみ記載)',
+      '',
+      `※ 情報共有テスト (32-1〜36-1) は検証用GビズID未取得のため対象外。`,
+      skipped.length ? `※ evidence未取得でスキップした試験No: ${skipped.join(', ')}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  )
+
+  const bodies = buildMailBodies(softwareId, receiptNo)
+  zip.file('メール本文_成績書.txt', `件名: ${bodies.gradeSubject}\n\n${bodies.gradeBody}\n`)
+  zip.file('メール本文_パスワード.txt', `件名: ${bodies.pwSubject}\n\n${bodies.pwBody}\n`)
+  mailPreview.value = `── 1通目 ──\n件名: ${bodies.gradeSubject}\n\n${bodies.gradeBody}\n\n── パスワード通知 ──\n件名: ${bodies.pwSubject}\n\n${bodies.pwBody}`
+
+  const blob = await zip.generateAsync({ type: 'blob' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `最終確認試験テスト結果_${softwareId}_${receiptNo}_01.zip`
+  a.click()
+  URL.revokeObjectURL(url)
+  alert(
+    `エビデンス ${included} 件を出力しました。` +
+      (skipped.length ? `\n(evidence未取得でスキップ: ${skipped.join(', ')})` : '') +
+      '\n\n成績書xlsxを加え、パスワード付きで再圧縮して送付してください (詳細は _提出手順.txt)。',
+  )
+}
+
+function copyMailBody() {
+  if (!mailPreview.value) {
+    const b = buildMailBodies(submissionSoftwareId.value.trim() || '{ソフトウェアID}', submissionReceiptNo.value.trim() || '{受付番号}')
+    mailPreview.value = `── 1通目 ──\n件名: ${b.gradeSubject}\n\n${b.gradeBody}\n\n── パスワード通知 ──\n件名: ${b.pwSubject}\n\n${b.pwBody}`
+  }
+  navigator.clipboard.writeText(mailPreview.value)
+}
+
 async function exportAllResults() {
   const zip = new JSZip()
 
@@ -2584,6 +2764,9 @@ const inquiryDoneCount = computed(() => [...inquiryResults.value.values()].filte
         <button @click="exportAllResults" style="padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
           全結果ZIPダウンロード
         </button>
+        <button @click="exportSubmissionZip" style="padding: 10px 20px; background: #198754; color: white; border: none; border-radius: 4px; cursor: pointer;" title="e-Gov 規約準拠のエビデンスZIP (試験No別フォルダ + _01/_02/_03/_04) とメール本文を生成。情報共有テスト(32-36)は除外。">
+          提出用ZIP生成 (規約準拠)
+        </button>
         <button @click="exportInquiryCsv" style="padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">
           照会CSV出力
         </button>
@@ -2593,6 +2776,24 @@ const inquiryDoneCount = computed(() => [...inquiryResults.value.values()].filte
         <span style="margin-left: auto;">
           完了: {{ inquiryDoneCount }} / {{ INQUIRY_TESTS.length }}
         </span>
+      </div>
+
+      <!-- 提出用エビデンス: ソフトウェアID / 受付番号 + メール本文プレビュー -->
+      <div style="padding: 12px; background: #f1f8f4; border: 1px solid #198754; border-radius: 6px; margin-bottom: 20px;">
+        <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 8px;">
+          <label style="font-size: 13px;">ソフトウェアID:
+            <input v-model="submissionSoftwareId" placeholder="HONSOFT00001" style="padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; width: 220px;">
+          </label>
+          <label style="font-size: 13px;">最終確認試験受付番号:
+            <input v-model="submissionReceiptNo" placeholder="TID_202604130039" style="padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; width: 220px;">
+          </label>
+          <button @click="copyMailBody" style="padding: 4px 12px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">メール本文コピー</button>
+        </div>
+        <p style="font-size: 12px; color: #555; margin: 4px 0;">
+          「提出用ZIP生成」で各試験の <code>_01/_02/_03/_04</code> を試験No別フォルダに格納したZIPを出力します。情報共有テスト(32-36)は除外。
+          JSZipは暗号化ZIPを作れないため、出力ZIPは平文です。成績書xlsxを加え、パスワード付きで再圧縮して送付してください(同梱の <code>_提出手順.txt</code> 参照)。
+        </p>
+        <textarea v-if="mailPreview" :value="mailPreview" readonly rows="10" style="width: 100%; font-size: 12px; font-family: monospace; border: 1px solid #ccc; border-radius: 4px; padding: 8px; box-sizing: border-box;" />
       </div>
 
       <div v-if="inquiryRunning" style="padding: 10px; background: #e9ecef; border-radius: 4px; margin-bottom: 20px;">
