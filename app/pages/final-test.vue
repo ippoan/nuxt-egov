@@ -258,16 +258,16 @@ interface ProcedureResult {
   /** デバッグ用: 送信した申請書XMLの内容 */
   debugApplyXml?: string
   /**
-   * 最終確認試験エビデンス: 申請 API の逐語 request/response + 送信 zip。
-   * 規約の _01(URL+ヘッダ) / _02(ボディ) / _03(レスポンス) / _04.ZIP(送信zip) の素材。
-   * Authorization トークンはマスク済み。
+   * 最終確認試験エビデンス: 申請 API の逐語 request/response。
+   * 規約の _01(URL+ヘッダ) / _02(ボディ) / _03(レスポンス) の素材。
+   * Authorization トークンはマスク済み。_04.ZIP は debugKouseiXml + debugApplyXml から再構成する
+   * (送信 zip 全体を保存すると localStorage 5MB quota を超えて run が停止するため保存しない)。
    */
   evidence?: {
     egovUrl: string
     method: string
     requestHeaders: Record<string, string>
     requestBodyAbbrev: { proc_id: string; send_file: { file_name: string; file_data: string } }
-    sentZipBase64: string
     response: unknown
     httpStatus: number
     capturedAt: string
@@ -339,7 +339,13 @@ function saveTestData() {
 }
 
 function saveResults() {
-  localStorage.setItem('egov_final_test_results', JSON.stringify([...results.value.values()]))
+  try {
+    localStorage.setItem('egov_final_test_results', JSON.stringify([...results.value.values()]))
+  } catch (e: unknown) {
+    // localStorage quota 超過等で保存に失敗しても run を止めない
+    // (evidence は cdp / エクスポートで都度回収できるため、保存失敗で全件停止させない)
+    console.error('[final-test] saveResults failed (localStorage quota?):', e)
+  }
 }
 
 function getResult(procId: string): ProcedureResult {
@@ -847,8 +853,9 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
       headers: submitHeaders,
     })
 
-    // 最終確認試験エビデンス: 逐語 request/response + 送信 zip を保存 (規約 _01〜_04 用)。
-    // Authorization トークンはマスクし、巨大な file_data は _04.ZIP(sentZipBase64) に逃がす。
+    // 最終確認試験エビデンス: 逐語 request/response を保存 (規約 _01〜_03 用)。
+    // Authorization トークンはマスク。送信 zip 全体 (数百KB) は localStorage 5MB quota を
+    // 食い潰し run を停止させるため保存せず、_04.ZIP は debugKouseiXml+debugApplyXml から再構成する。
     const maskedHeaders: Record<string, string> = { ...submitHeaders }
     if (maskedHeaders.Authorization) maskedHeaders.Authorization = 'Bearer ****(masked)'
     r.evidence = {
@@ -859,10 +866,9 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
         proc_id: requestBody.proc_id,
         send_file: {
           file_name: requestBody.send_file.file_name,
-          file_data: `(base64, ${newZipBase64.length} chars — 実体は _04.ZIP)`,
+          file_data: `(base64, ${newZipBase64.length} chars — 申請データは _04.ZIP)`,
         },
       },
-      sentZipBase64: newZipBase64,
       response: applyResult,
       httpStatus: 200,
       capturedAt: new Date().toISOString(),
