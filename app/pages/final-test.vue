@@ -257,7 +257,25 @@ interface ProcedureResult {
   debugKouseiXml?: string
   /** デバッグ用: 送信した申請書XMLの内容 */
   debugApplyXml?: string
+  /**
+   * 最終確認試験エビデンス: 申請 API の逐語 request/response + 送信 zip。
+   * 規約の _01(URL+ヘッダ) / _02(ボディ) / _03(レスポンス) / _04.ZIP(送信zip) の素材。
+   * Authorization トークンはマスク済み。
+   */
+  evidence?: {
+    egovUrl: string
+    method: string
+    requestHeaders: Record<string, string>
+    requestBodyAbbrev: { proc_id: string; send_file: { file_name: string; file_data: string } }
+    sentZipBase64: string
+    response: unknown
+    httpStatus: number
+    capturedAt: string
+  }
 }
+
+/** e-Gov 検証環境 API ベース (公開定数、エビデンスの実行 API URL 記録用) */
+const EGOV_API_BASE = 'https://api2.sbx.e-gov.go.jp/shinsei/v2'
 
 const appConfig = useAppConfig()
 const gitCommit = (appConfig as any).gitCommit || 'dev'
@@ -816,17 +834,39 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
 
     // 電子送達手続は /post-apply エンドポイントを使用
     const applyEndpoint = proc.proc_id === '900A013800001000' ? '/api/egov/post-apply' : '/api/egov/apply'
+    const requestBody = {
+      proc_id: proc.proc_id,
+      send_file: {
+        file_name: `${proc.proc_id}.zip`,
+        file_data: newZipBase64,
+      },
+    }
     const applyResult = await $fetch<{ results: { arrive_id: string } }>(applyEndpoint, {
       method: 'POST',
-      body: {
-        proc_id: proc.proc_id,
-        send_file: {
-          file_name: `${proc.proc_id}.zip`,
-          file_data: newZipBase64,
-        },
-      },
+      body: requestBody,
       headers: submitHeaders,
     })
+
+    // 最終確認試験エビデンス: 逐語 request/response + 送信 zip を保存 (規約 _01〜_04 用)。
+    // Authorization トークンはマスクし、巨大な file_data は _04.ZIP(sentZipBase64) に逃がす。
+    const maskedHeaders: Record<string, string> = { ...submitHeaders }
+    if (maskedHeaders.Authorization) maskedHeaders.Authorization = 'Bearer ****(masked)'
+    r.evidence = {
+      egovUrl: `${EGOV_API_BASE}${applyEndpoint.replace('/api/egov', '')}`,
+      method: 'POST',
+      requestHeaders: maskedHeaders,
+      requestBodyAbbrev: {
+        proc_id: requestBody.proc_id,
+        send_file: {
+          file_name: requestBody.send_file.file_name,
+          file_data: `(base64, ${newZipBase64.length} chars — 実体は _04.ZIP)`,
+        },
+      },
+      sentZipBase64: newZipBase64,
+      response: applyResult,
+      httpStatus: 200,
+      capturedAt: new Date().toISOString(),
+    }
 
     r.arrive_id = applyResult.results.arrive_id
     r.status = 'done'
