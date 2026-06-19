@@ -1,5 +1,6 @@
 import { EgovClient, generatePKCE, buildAuthorizationUrl } from '@ippoan/egov-shinsei-sdk'
 import type { TokenResponse } from '@ippoan/egov-shinsei-sdk'
+import { captureFetch, captureActive, pushEvidence, realEgovUrl, abbreviate } from '~/utils/egovCapture'
 
 export function useEgovAuth() {
   const config = useRuntimeConfig()
@@ -16,6 +17,8 @@ export function useEgovAuth() {
     apiBase: '/api/egov',
     authBase,
     clientId,
+    // 最終確認試験エビデンス: capture 中のみ client.* の e-Gov 呼び出しを逐語記録する。
+    fetch: captureFetch,
   })
 
   // localStorage からトークンを復元（リロード時にログイン不要にする）
@@ -142,12 +145,26 @@ export function useEgovAuth() {
       (window as any)._egovToken = accessToken.value
     }
 
-    return $fetch<T>(`/api/egov${path}`, {
+    const result = await $fetch<T>(`/api/egov${path}`, {
       params,
       headers: {
         Authorization: `Bearer ${accessToken.value}`,
       },
     })
+    // 最終確認試験エビデンス: GET 成功を記録 ($fetch のエラー挙動は温存)。
+    if (import.meta.client && captureActive()) {
+      const qs = params ? '?' + new URLSearchParams(params).toString() : ''
+      pushEvidence({
+        egovUrl: realEgovUrl(`/api/egov${path}${qs}`),
+        method: 'GET',
+        requestHeaders: { Authorization: 'Bearer ****(masked)' },
+        requestBody: undefined,
+        response: abbreviate(result),
+        httpStatus: 200,
+        capturedAt: new Date().toISOString(),
+      })
+    }
+    return result
   }
 
   return {
