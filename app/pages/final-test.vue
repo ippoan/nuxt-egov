@@ -1669,7 +1669,8 @@ async function runInquiryTest(item: InquiryTestItem) {
       }
       case '16-1': {
         const res = await client.listMessages({ date_from: '2020-11-24', date_to: today, limit: 10, offset: 0 })
-        const list = (res.results as any)?.message_list
+        // listMessages の応答 field は information_list（旧 message_list 互換も残す）
+        const list = (res.results as any)?.information_list ?? (res.results as any)?.message_list
         if (list?.[0]?.information_id) {
           inquiryState.informationId = list[0].information_id
         }
@@ -1765,7 +1766,8 @@ async function runInquiryTest(item: InquiryTestItem) {
         }
         const res = await client.getPaymentInfo(inquiryState.payArriveId)
         const pay = (res.results as any)
-        if (pay?.proc_id) inquiryState.paymentProcId = pay.proc_id
+        // getPaymentInfo 応答に proc_id は無いので申請手続の proc_id を anchor にする
+        inquiryState.paymentProcId = pay?.proc_id || payProc.proc_id
         if (pay?.apply_pay_list?.[0]?.pay_number) {
           inquiryState.paymentNumber = pay.apply_pay_list[0].pay_number
         }
@@ -1807,7 +1809,8 @@ async function runInquiryTest(item: InquiryTestItem) {
       }
       case '29-1': {
         // ※開始日は最終試験開始日を、終了日は現在日を指定すること
-        const res = await client.listPostDeliveries({ date_from: today, date_to: today, limit: 10, offset: 0 })
+        // date_from を today に固定すると過去の電子送達 (前日以前に到達) を拾えないため広く取る
+        const res = await client.listPostDeliveries({ date_from: '2020-11-24', date_to: today, limit: 10, offset: 0 })
         const list = (res.results as any)?.post_list
         if (list?.[0]?.post_id) {
           inquiryState.postId_29_1 = list[0].post_id
