@@ -4,6 +4,7 @@ import { EgovApiError } from '@ippoan/egov-shinsei-sdk'
 import type { EgovClient } from '@ippoan/egov-shinsei-sdk'
 import JSZip from 'jszip'
 import { TEST_PROCEDURES, PROCS_WITH_DESTINATION, PROCS_WITH_ATTACHMENT, PROCS_WITH_PAYMENT, type TestProcedure } from '~/utils/finalTestProcedures'
+import { beginCapture, endCapture, pushEvidence, type EvidenceCall } from '~/utils/egovCapture'
 
 const { isAuthenticated, startLogin, logout, apiFetch, getClient } = useEgovAuth()
 const { pfxLoaded, certSubject, extraPfxCount, loadPfx, loadTestPfx, loadExtraPfx, signKouseiXml, signConfigXml } = useXmlSign()
@@ -276,6 +277,7 @@ interface ProcedureResult {
 
 /** e-Gov 検証環境 API ベース (公開定数、エビデンスの実行 API URL 記録用) */
 const EGOV_API_BASE = 'https://api2.sbx.e-gov.go.jp/shinsei/v2'
+const EGOV_AUTH_BASE = 'https://account2.sbx.e-gov.go.jp/auth'
 
 const appConfig = useAppConfig()
 const gitCommit = (appConfig as any).gitCommit || 'dev'
@@ -1211,6 +1213,8 @@ interface InquiryResult {
   response?: string
   error?: string
   durationMs?: number
+  /** 最終確認試験エビデンス: capture した e-Gov 呼び出し列 (_01/_02/_03 用)。 */
+  evidence?: EvidenceCall[]
 }
 
 const inquiryResults = ref<Map<string, InquiryResult>>(new Map())
@@ -1293,6 +1297,7 @@ async function runInquiryTest(item: InquiryTestItem) {
     return
   }
 
+  beginCapture()
   try {
     switch (item.test_no) {
       // 認証・認可 (01-1 〜 04-2): ログイン済みなら自動pass
@@ -1326,6 +1331,7 @@ async function runInquiryTest(item: InquiryTestItem) {
           body: { token: token04, token_type_hint: 'access_token' },
         })
         r.response = `active=${res.active}`
+        pushEvidence({ egovUrl: `${EGOV_AUTH_BASE}/token/introspect`, method: 'POST', requestHeaders: { 'Content-Type': 'application/x-www-form-urlencoded' }, requestBody: { token: '****(masked)', token_type_hint: 'access_token' }, response: res, httpStatus: 200, capturedAt: new Date().toISOString() })
         break
       }
       case '04-2': {
@@ -1337,6 +1343,7 @@ async function runInquiryTest(item: InquiryTestItem) {
           body: { token: rt04, token_type_hint: 'refresh_token' },
         })
         r.response = `active=${res.active}`
+        pushEvidence({ egovUrl: `${EGOV_AUTH_BASE}/token/introspect`, method: 'POST', requestHeaders: { 'Content-Type': 'application/x-www-form-urlencoded' }, requestBody: { token: '****(masked)', token_type_hint: 'refresh_token' }, response: res, httpStatus: 200, capturedAt: new Date().toISOString() })
         break
       }
       // 申請書作成 (05-1 〜 12-2): 既存submitOneを活用
@@ -1812,6 +1819,7 @@ async function runInquiryTest(item: InquiryTestItem) {
           body: { refresh_token: saved.refreshToken },
         })
         r.response = '204 No Content'
+        pushEvidence({ egovUrl: `${EGOV_AUTH_BASE}/logout`, method: 'POST', requestHeaders: { 'Content-Type': 'application/x-www-form-urlencoded' }, requestBody: { refresh_token: '****(masked)' }, response: '204 No Content', httpStatus: 204, capturedAt: new Date().toISOString() })
         break
       }
       case '26-1': {
@@ -1823,6 +1831,7 @@ async function runInquiryTest(item: InquiryTestItem) {
             body: { token: saved.refreshToken, token_type_hint: 'refresh_token' },
           })
           r.response = `active=${res.active}`
+          pushEvidence({ egovUrl: `${EGOV_AUTH_BASE}/token/introspect`, method: 'POST', requestHeaders: { 'Content-Type': 'application/x-www-form-urlencoded' }, requestBody: { token: '****(masked)', token_type_hint: 'refresh_token' }, response: res, httpStatus: 200, capturedAt: new Date().toISOString() })
         } catch (e: any) {
           // ログアウト後はエラーになる場合あり（仕様通り）
           r.response = `expected error: ${e.data?.error ?? e.message}`
@@ -1874,6 +1883,8 @@ async function runInquiryTest(item: InquiryTestItem) {
     }
   }
 
+  const captured = endCapture()
+  if (captured.length) r.evidence = captured
   r.durationMs = Date.now() - start
   inquiryResults.value.set(item.test_no, { ...r })
 
