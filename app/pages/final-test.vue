@@ -1253,6 +1253,11 @@ onMounted(async () => {
   postArriveId.value = localStorage.getItem('egov_post_arrive_id') ?? ''
   postId.value = localStorage.getItem('egov_post_id') ?? ''
   paymentArriveId.value = localStorage.getItem('egov_payment_arrive_id') ?? ''
+  // 追加準備データは inquiryState (SDK state / egov_inquiry_state) から復元
+  resubmitBaseArriveId.value = inquiryState.arriveId_09_base ?? ''
+  informationId.value = inquiryState.informationId ?? ''
+  paymentProcId.value = inquiryState.paymentProcId ?? ''
+  paymentNumber.value = inquiryState.paymentNumber ?? ''
 })
 
 function saveInquiryResults() {
@@ -1270,6 +1275,11 @@ const preparedNoticeSubId = ref('')
 const postArriveId = ref('')
 const postId = ref('')
 const paymentArriveId = ref('')
+// 全 skip を実行可能にするための準備データ入力 (e-Gov 送付の ID を手入力)
+const resubmitBaseArriveId = ref('') // 09-1/10-1: 補正待ち案件の到達番号 (arriveId_09_base)
+const informationId = ref('')        // 17-1: お知らせID
+const paymentProcId = ref('')        // 24-1: 納付手続ID
+const paymentNumber = ref('')        // 24-1: 納付番号
 
 function savePreparedIds() {
   localStorage.setItem('egov_prepared_arrive_id', preparedArriveId.value)
@@ -1277,6 +1287,15 @@ function savePreparedIds() {
   localStorage.setItem('egov_post_arrive_id', postArriveId.value)
   localStorage.setItem('egov_post_id', postId.value)
   localStorage.setItem('egov_payment_arrive_id', paymentArriveId.value)
+  // 各 case が読む inquiryState field へ反映 (入力→実行の配線)。空入力は既存値 (prior test/SDK) を維持。
+  if (resubmitBaseArriveId.value) inquiryState.arriveId_09_base = resubmitBaseArriveId.value
+  if (informationId.value) inquiryState.informationId = informationId.value
+  if (paymentArriveId.value) inquiryState.payArriveId = paymentArriveId.value
+  if (paymentProcId.value) inquiryState.paymentProcId = paymentProcId.value
+  if (paymentNumber.value) inquiryState.paymentNumber = paymentNumber.value
+  if (postId.value) inquiryState.postId_29_1 = postId.value
+  if (postArriveId.value) inquiryState.postArriveId = postArriveId.value
+  localStorage.setItem('egov_inquiry_state', JSON.stringify(inquiryState))
 }
 
 const today = new Date().toISOString().slice(0, 10)
@@ -1287,10 +1306,18 @@ async function runInquiryTest(item: InquiryTestItem) {
   const client = getClient()
   const start = Date.now()
 
-  // ※最終確認試験用データ情報を参照 — e-Gov から送付されるテストデータ必須のためskip
-  if (item.needsPreparedData) {
+  // 準備データ (e-Gov 送付の到達番号/通番等) が「テストデータ設定」に入力済みなら走らせる。
+  // 未入力時のみ skip。これで全 skip 項目が、データを入れれば実行・evidence 取得できる。
+  const prepReady: Record<string, boolean> = {
+    '09-1': !!inquiryState.arriveId_09_base,
+    '10-1': !!inquiryState.arriveId_09_base,
+    '19-1': !!preparedArriveId.value && !!preparedNoticeSubId.value,
+    '20-1': !!preparedArriveId.value && !!preparedNoticeSubId.value,
+    '21-1': !!preparedArriveId.value && !!preparedNoticeSubId.value,
+  }
+  if (item.needsPreparedData && !prepReady[item.test_no]) {
     r.status = 'skip'
-    r.response = '※最終確認試験用データ情報を参照（e-Govから送付される到達番号/通知通番が必要）'
+    r.response = '※準備データ未入力（e-Govから送付される到達番号/通知通番を「テストデータ設定」に入力後、再実行）'
     r.durationMs = 0
     inquiryResults.value.set(item.test_no, { ...r })
     saveInquiryResults()
@@ -2202,6 +2229,14 @@ const inquiryDoneCount = computed(() => [...inquiryResults.value.values()].filte
           <input v-model="postArriveId" @change="savePreparedIds" placeholder="28-1用" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px; font-family: monospace;" />
           <label>電子送達 post_id:</label>
           <input v-model="postId" @change="savePreparedIds" placeholder="30-1/31-1用" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px; font-family: monospace;" />
+          <label>再提出/補正 到達番号:</label>
+          <input v-model="resubmitBaseArriveId" @change="savePreparedIds" placeholder="09-1/10-1用 (補正待ち案件)" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px; font-family: monospace;" />
+          <label>お知らせID:</label>
+          <input v-model="informationId" @change="savePreparedIds" placeholder="17-1用" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px; font-family: monospace;" />
+          <label>納付 手続ID:</label>
+          <input v-model="paymentProcId" @change="savePreparedIds" placeholder="24-1用" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px; font-family: monospace;" />
+          <label>納付番号:</label>
+          <input v-model="paymentNumber" @change="savePreparedIds" placeholder="24-1用" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px; font-family: monospace;" />
         </div>
       </div>
 
