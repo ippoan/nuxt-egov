@@ -2028,9 +2028,19 @@ async function runInquiryTest(item: InquiryTestItem) {
           }
         }
         if (!docArriveId || !docNoticeSubId) throw new Error('公文書のある案件がありません。sandbox で公文書発行後に再実行してください。')
-        const res = await client.getOfficialDocument(preparedArriveId.value, preparedNoticeSubId.value)
+        const res = await client.getOfficialDocument(docArriveId, docNoticeSubId)
         inquiryState.officialDocFileData = res.results.file_data
-        r.response = `files=${res.results.file_name_list?.length ?? 0}`
+        // 21-1 の署名検証で使う XML ファイル名を保存する。
+        // 公文書 ZIP に含まれるのは kousei.xml ではなく comment_doc{N}.xml なので、
+        // file_name_list から実際の .xml エントリを拾う (固定名だと「指定された電子公文書が
+        // 見つかりません」になる)。
+        const fileList19 = res.results.file_name_list ?? []
+        const xmlEntry = fileList19.find((f: { file_name: string }) => f.file_name.endsWith('.xml'))
+        inquiryState.officialDocXmlFileName = xmlEntry?.file_name ?? ''
+        // 19-1 で解決した arrive_id / notice_sub_id を 20-1 が参照するため固定する。
+        preparedArriveId.value = docArriveId
+        preparedNoticeSubId.value = docNoticeSubId
+        r.response = `files=${fileList19.length}`
         break
       }
       case '20-1': {
@@ -2042,7 +2052,9 @@ async function runInquiryTest(item: InquiryTestItem) {
       case '21-1': {
         const fileData = inquiryState.officialDocFileData
         if (!fileData) throw new Error('19-1のfile_dataなし')
-        const res = await client.verifyOfficialDocument({ file_name: 'official_doc.zip', file_data: fileData, sig_verification_xml_file_name: 'kousei.xml' })
+        // 公文書 ZIP 内の実際の署名対象 XML 名を 19-1 で保存済み (comment_doc{N}.xml)。
+        const xmlName = inquiryState.officialDocXmlFileName || 'comment_doc4.xml'
+        const res = await client.verifyOfficialDocument({ file_name: 'official_doc.zip', file_data: fileData, sig_verification_xml_file_name: xmlName })
         r.response = JSON.stringify(res.results).substring(0, 200)
         break
       }
