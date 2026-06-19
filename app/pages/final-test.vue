@@ -1593,6 +1593,34 @@ async function runInquiryTest(item: InquiryTestItem) {
     } catch { /* 自動検出失敗時は既存値のまま (下の gate / case 内で skip 判定) */ }
   }
 
+  // 19-1/20-1/21-1 (公文書) は公文書発行済み案件の 到達番号 + 通知通番 が要る。手動入力
+  // (テストデータ設定) が無ければ申請一覧から official_list を持つ案件を自動検出して
+  // preparedArriveId / preparedNoticeSubId を補完する (21-1=署名検証なので sign='あり' を優先)。
+  // apply_list の各項目が official_list を直接含むので getApplication は不要。公文書案件は
+  // 後方ページにあるため複数ページ走査する。公文書が無ければ補完されず従来通り skip。
+  if ((item.test_no === '19-1' || item.test_no === '20-1' || item.test_no === '21-1')
+      && (!preparedArriveId.value || !preparedNoticeSubId.value)) {
+    try {
+      let signedHit: { arrive_id: string; notice_sub_id: number } | null = null
+      let anyHit: { arrive_id: string; notice_sub_id: number } | null = null
+      for (let off = 0; off < 300 && !signedHit; off += 50) {
+        const list = await client.listApplications({ date_from: '2020-01-01', date_to: today, limit: 50, offset: off })
+        const apps = ((list.results as any)?.apply_list ?? []) as Array<{ arrive_id: string; official_list?: Array<{ notice_sub_id: number; sign?: string }> }>
+        for (const a of apps) {
+          const signed = a.official_list?.find(d => d.sign === 'あり')
+          if (signed) { signedHit = { arrive_id: a.arrive_id, notice_sub_id: signed.notice_sub_id }; break }
+          if (!anyHit && a.official_list?.length) anyHit = { arrive_id: a.arrive_id, notice_sub_id: a.official_list[0]!.notice_sub_id }
+        }
+        if (apps.length < 50) break
+      }
+      const hit = signedHit ?? anyHit
+      if (hit) {
+        preparedArriveId.value = hit.arrive_id
+        preparedNoticeSubId.value = String(hit.notice_sub_id)
+      }
+    } catch { /* 自動検出失敗時は補完せず gate で skip */ }
+  }
+
   // 準備データ (e-Gov 送付の到達番号/通番等) が「テストデータ設定」に入力済みなら走らせる。
   // 未入力時のみ skip。これで全 skip 項目が、データを入れれば実行・evidence 取得できる。
   const prepReady: Record<string, boolean> = {
