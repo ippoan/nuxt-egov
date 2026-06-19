@@ -1535,7 +1535,9 @@ async function buildStandardResubmit(
   }
   // 申請書フォーム XML も submitOne 同等に充填 (必須項目を埋めないと申請データチェックエラー 400)
   await fillApplyXmls(zip, proc, sk)
-  // 署名 (signatureRequired + PFX 読込済み): submitOne 標準形式と同じ署名パス
+  // 署名 (signatureRequired + PFX 読込済み): submitOne 標準形式と同じ署名パス。
+  // ただし署名数は 1 固定 — e-Gov は「補正・再提出に必要な署名は1人です」と明示する
+  // (新規申請の proc.signatureCount=3 で署名すると kousei.xml で 400 になる)。
   if (pfxLoaded.value && proc.signatureRequired) {
     for (const cfn of sk.results.configuration_file_name) {
       const p = `${proc.proc_id}/${cfn}`
@@ -1547,7 +1549,7 @@ async function buildStandardResubmit(
         const af = zip.file(`${proc.proc_id}/${fi.apply_file_name}`)
         if (af) appFiles.set(fi.apply_file_name, await af.async('string'))
       }
-      kx = signKouseiXml(kx, appFiles, proc.signatureCount)
+      kx = signKouseiXml(kx, appFiles, 1)
       zip.file(p, kx)
     }
   }
