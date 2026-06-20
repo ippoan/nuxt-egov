@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import worker, { type Env } from '../src/index';
+// `src/index.ts` は agents/mcp (cloudflare:workers) を import するため node では
+// 読めない。proxy 系のテストは agents 非依存の `src/proxy.ts` を直接叩く。
+import worker, { type ProxyEnv } from '../src/proxy';
 
 function makeSecret(value: string): SecretsStoreSecret {
   return { get: async () => value } as unknown as SecretsStoreSecret;
 }
 
-function makeEnv(overrides: Partial<Env> = {}): Env {
+function makeEnv(overrides: Partial<ProxyEnv> = {}): ProxyEnv {
   return {
     EGOV_AUTH_BASE: 'https://auth.test',
     EGOV_API_BASE: 'https://api.test/v2',
@@ -145,5 +147,97 @@ describe('/api/* proxy', () => {
     expect(body.proxied).toBe(true);
     expect(body.url).toBe('https://api.test/v2/procedures/123?foo=bar');
     expect(body.forwarded_auth).toBe('Bearer caller-token');
+  });
+});
+
+describe('POST /introspect', () => {
+  beforeEach(() => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === 'https://auth.test/token/introspect') {
+        return new Response(
+          JSON.stringify({
+            active: true,
+            received: init?.body,
+            received_auth: (init?.headers as Record<string, string>)?.['Authorization'],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as unknown as typeof fetch;
+  });
+
+  it('rejects non-POST', async () => {
+    const res = await worker.fetch(new Request('https://w/introspect'), makeEnv());
+    expect(res.status).toBe(405);
+  });
+
+  it('rejects missing token', async () => {
+    const res = await worker.fetch(
+      new Request('https://w/introspect', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('introspects with injected client_secret', async () => {
+    const res = await worker.fetch(
+      new Request('https://w/introspect', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token: 'tok-1', token_type_hint: 'access_token' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json() as { active: boolean; received: string; received_auth: string };
+    expect(body.active).toBe(true);
+    expect(body.received).toContain('token=tok-1');
+    expect(body.received).toContain('token_type_hint=access_token');
+    expect(body.received_auth).toBe(`Basic ${btoa('client-id:client-secret')}`);
+  });
+});
+
+describe('POST /logout', () => {
+  beforeEach(() => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === 'https://auth.test/logout') {
+        return new Response(null, {
+          status: 204,
+          headers: { 'x-received': String(init?.body ?? '') },
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as unknown as typeof fetch;
+  });
+
+  it('rejects missing refresh_token', async () => {
+    const res = await worker.fetch(
+      new Request('https://w/logout', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('passes through 204 No Content', async () => {
+    const res = await worker.fetch(
+      new Request('https://w/logout', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ refresh_token: 'rt-1' }),
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(204);
   });
 });

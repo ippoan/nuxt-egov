@@ -1,6 +1,9 @@
+// egov-staging worker への薄い proxy (Refs #91)。e-Gov v2 API への透過は
+// worker の /api/** が行い、Nuxt server は worker に forward するだけ。
+// caller の Authorization (Bearer) と X-eGovAPI-Trial をそのまま渡す。
 export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig()
-  const apiBase = config.public.egovApiBase as string
+  const workerBase = config.public.egovWorkerBase as string
   const path = getRouterParam(event, 'path') || ''
   const query = getQuery(event)
   const method = event.method
@@ -10,7 +13,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 401, message: 'No authorization header' })
   }
 
-  const url = new URL(`${apiBase}/${path}`)
+  const url = new URL(`${workerBase}/api/${path}`)
   for (const [k, v] of Object.entries(query)) {
     if (v !== undefined && v !== null) {
       url.searchParams.set(k, String(v))

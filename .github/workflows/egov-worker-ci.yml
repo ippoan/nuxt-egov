@@ -33,9 +33,13 @@ jobs:
       project_type: worker
       working_directory: workers/egov
       # lockfile 未コミット (GitHub Packages auth が必要なため CI で生成) なので
-      # `npm ci` ではなく `npm install` を使う。同じ理由で cache_dependency_path
-      # は root の lockfile に fallback させる。
+      # `npm ci` ではなく `npm install` を使う。
       install_command: 'npm install'
+      # cache_dependency_path を渡さないと setup-node の cache:'npm' が lockfile を
+      # 探して見つからず hard error になる (Node24 強制後に顕在化)。Nuxt 側 test.yml
+      # と同様に package.json を cache key に使う (lockfile commit は dev dist-tag
+      # 追従のため不可)。
+      cache_dependency_path: 'workers/egov/package.json'
       typecheck_command: 'npx tsc --noEmit'
       has_tests: true
       npm_scope: '@ippoan'

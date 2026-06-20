@@ -1,22 +1,14 @@
+// egov-staging worker への薄い proxy (Refs #91)。client_secret inject は
+// worker 側が行う。e-Gov は 204 No Content を返す。
 export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig()
+  const workerBase = config.public.egovWorkerBase as string
   const body = await readBody(event)
 
-  const clientId = config.public.egovClientId as string
-  const clientSecret = config.egovClientSecret as string
-  const authBase = config.public.egovAuthBase as string
-  const basicAuth = btoa(`${clientId}:${clientSecret}`)
-
-  const params = new URLSearchParams()
-  params.set('refresh_token', body.refresh_token)
-
-  const res = await fetch(`${authBase}/logout`, {
+  const res = await fetch(`${workerBase}/logout`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Authorization': `Basic ${basicAuth}`,
-    },
-    body: params,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
   })
 
   if (res.status === 204) {
