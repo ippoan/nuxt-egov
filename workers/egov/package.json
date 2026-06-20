@@ -10,7 +10,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ippoan/egov-shinsei-sdk": "^0.0.1"
+    "@ippoan/egov-shinsei-sdk": "^0.0.1",
+    "@ippoan/mcp-cf-workers": "dev",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "agents": "^0.13.3",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241127.0",

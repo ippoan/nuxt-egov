@@ -18,7 +18,11 @@
     "NUXT_PUBLIC_EGOV_CLIENT_ID": "K26XGOmbDusxfKsp",
     "NUXT_PUBLIC_EGOV_REDIRECT_URI": "https://egov-check.ippoan.org/callback",
     "NUXT_PUBLIC_EGOV_AUTH_BASE": "https://account2.sbx.e-gov.go.jp/auth",
-    "NUXT_PUBLIC_EGOV_API_BASE": "https://api2.sbx.e-gov.go.jp/shinsei/v2"
+    "NUXT_PUBLIC_EGOV_API_BASE": "https://api2.sbx.e-gov.go.jp/shinsei/v2",
+    // e-Gov 呼び出しを集約する worker (Refs #91)。prod worker (egov.ippoan.org)
+    // は未セットアップ (#91 Out of scope) かつ prod/staging とも試験 API のみを
+    // 叩くため、当面は staging worker を共用する。
+    "NUXT_PUBLIC_EGOV_WORKER_BASE": "https://egov-staging.ippoan.org"
   },
   "routes": [
     { "pattern": "egov-check.ippoan.org", "custom_domain": true }
@@ -30,7 +34,8 @@
         "NUXT_PUBLIC_EGOV_CLIENT_ID": "K26XGOmbDusxfKsp",
         "NUXT_PUBLIC_EGOV_REDIRECT_URI": "https://egov-check-staging.ippoan.org/callback",
         "NUXT_PUBLIC_EGOV_AUTH_BASE": "https://account2.sbx.e-gov.go.jp/auth",
-        "NUXT_PUBLIC_EGOV_API_BASE": "https://api2.sbx.e-gov.go.jp/shinsei/v2"
+        "NUXT_PUBLIC_EGOV_API_BASE": "https://api2.sbx.e-gov.go.jp/shinsei/v2",
+        "NUXT_PUBLIC_EGOV_WORKER_BASE": "https://egov-staging.ippoan.org"
       },
       "routes": [
         { "pattern": "egov-check-staging.ippoan.org", "custom_domain": true }

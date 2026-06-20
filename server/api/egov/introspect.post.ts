@@ -1,23 +1,14 @@
+// egov-staging worker への薄い proxy (Refs #91)。client_secret inject は
+// worker 側が行う。
 export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig()
+  const workerBase = config.public.egovWorkerBase as string
   const body = await readBody(event)
 
-  const clientId = config.public.egovClientId as string
-  const clientSecret = config.egovClientSecret as string
-  const authBase = config.public.egovAuthBase as string
-  const basicAuth = btoa(`${clientId}:${clientSecret}`)
-
-  const params = new URLSearchParams()
-  params.set('token', body.token)
-  if (body.token_type_hint) params.set('token_type_hint', body.token_type_hint)
-
-  const res = await fetch(`${authBase}/token/introspect`, {
+  const res = await fetch(`${workerBase}/introspect`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Authorization': `Basic ${basicAuth}`,
-    },
-    body: params,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
   })
 
   const data = await res.json()

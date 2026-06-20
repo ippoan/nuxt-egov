@@ -35,12 +35,16 @@ export default defineNuxtConfig({
     gitCommit,
   },
   runtimeConfig: {
-    egovClientSecret: '',
+    // client_secret は egov-staging worker のみが保持する (Refs #91)。
+    // Nuxt app 側からは剥がした。
     public: {
       egovClientId: '',
       egovRedirectUri: '',
       egovAuthBase: 'https://account2.sbx.e-gov.go.jp/auth',
       egovApiBase: 'https://api2.sbx.e-gov.go.jp/shinsei/v2',
+      // e-Gov 呼び出しを集約する worker。server/api/egov/* はこの worker に
+      // forward するだけの薄い proxy になり、client_secret inject は worker 側。
+      egovWorkerBase: 'https://egov-staging.ippoan.org',
     },
   },
 })

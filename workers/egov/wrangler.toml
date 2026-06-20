@@ -16,6 +16,18 @@ EGOV_CLIENT_ID = "K26XGOmbDusxfKsp"
 enabled = true
 head_sampling_rate = 1
 
+# MCP server (DO + WebSocket)。e-Gov 試験 API を read tool として公開する。
+# agents SDK の McpAgent は session state を DO の SQLite に持つため
+# new_sqlite_classes で migrate する。mountDurableMcp の default binding 名は
+# "MCP_OBJECT"。Refs ippoan/mcp-cf-workers#6。
+[[durable_objects.bindings]]
+name = "MCP_OBJECT"
+class_name = "EgovMcp"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["EgovMcp"]
+
 # 公開 URL — staging=実運用環境モデル (Refs ippoan/secrets-inventory)。
 [[routes]]
 pattern = "egov-staging.ippoan.org"
