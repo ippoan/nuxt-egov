@@ -35,8 +35,11 @@ export default defineNuxtConfig({
     gitCommit,
   },
   runtimeConfig: {
-    // client_secret は egov-staging worker のみが保持する (Refs #91)。
-    // Nuxt app 側からは剥がした。
+    // client_secret は Nuxt worker の wrangler secret (NUXT_EGOV_CLIENT_SECRET) を
+    // runtimeConfig 経由で読む。egov-staging worker の Secrets Store binding が CI
+    // deploy で attach されず 500 になったため、OAuth (token/introspect/logout) は
+    // Nuxt worker から e-Gov を直接叩く方式に戻した (Refs #133)。
+    egovClientSecret: '',
     public: {
       egovClientId: '',
       egovRedirectUri: '',
