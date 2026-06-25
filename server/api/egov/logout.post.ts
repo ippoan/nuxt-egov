@@ -5,7 +5,7 @@
 //  なったため直叩きに戻した。Refs #133)
 export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig(event)
-  const body = await readBody(event) as Record<string, string>
+  const body = await readBody(event)
 
   const clientId = config.public.egovClientId as string
   const clientSecret = config.egovClientSecret as string
