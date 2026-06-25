@@ -7,6 +7,12 @@
   "assets": {
     "directory": ".output/public"
   },
+  // /api/egov/* proxy の 500 を Workers Observability で追えるようにする。
+  // named env (staging) は observability を継承しないため env.staging 側にも宣言する。
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
   // frontend-ci.yml の secret-verify job が secret backup の auditability の
   // ため明示宣言を要求する。NUXT_EGOV_CLIENT_SECRET は wrangler secret で
   // 個別管理しており GCP Secret Manager backup audit の対象外とするため、
@@ -30,6 +36,10 @@
   "env": {
     "staging": {
       "name": "egov-check-staging",
+      "observability": {
+        "enabled": true,
+        "head_sampling_rate": 1
+      },
       "vars": {
         "NUXT_PUBLIC_EGOV_CLIENT_ID": "K26XGOmbDusxfKsp",
         "NUXT_PUBLIC_EGOV_REDIRECT_URI": "https://egov-check-staging.ippoan.org/callback",
