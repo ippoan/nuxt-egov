@@ -33,6 +33,14 @@
   "routes": [
     { "pattern": "egov-check.ippoan.org", "custom_domain": true }
   ],
+  // egov-staging worker への service binding。public URL 経由だと
+  // egov-staging.ippoan.org に掛かった Cloudflare Access (host 全体保護) に
+  // server-to-server fetch が 302 され、ログイン HTML を res.json() しようとして
+  // 500 になる (Refs #133)。service binding は内部 RPC で Access edge を通らない
+  // ため、worker の /token /api/** へ直接到達できる。
+  "services": [
+    { "binding": "EGOV_WORKER", "service": "egov-staging" }
+  ],
   "env": {
     "staging": {
       "name": "egov-check-staging",
@@ -47,6 +55,9 @@
         "NUXT_PUBLIC_EGOV_API_BASE": "https://api2.sbx.e-gov.go.jp/shinsei/v2",
         "NUXT_PUBLIC_EGOV_WORKER_BASE": "https://egov-staging.ippoan.org"
       },
+      "services": [
+        { "binding": "EGOV_WORKER", "service": "egov-staging" }
+      ],
       "routes": [
         { "pattern": "egov-check-staging.ippoan.org", "custom_domain": true }
       ]
