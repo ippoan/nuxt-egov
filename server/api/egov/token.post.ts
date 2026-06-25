@@ -1,11 +1,10 @@
 // egov-staging worker への薄い proxy (Refs #91)。client_secret inject は
 // worker 側が行う。Nuxt app は client_secret を保持しない。
+// worker へは service binding 経由で到達する (Cloudflare Access 回避、Refs #133)。
 export default defineEventHandler(async (event) => {
-  const config = useRuntimeConfig()
-  const workerBase = config.public.egovWorkerBase as string
   const body = await readBody(event)
 
-  const res = await fetch(`${workerBase}/token`, {
+  const res = await egovWorkerFetch(event, '/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

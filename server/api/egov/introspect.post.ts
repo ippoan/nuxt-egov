@@ -1,11 +1,9 @@
 // egov-staging worker への薄い proxy (Refs #91)。client_secret inject は
-// worker 側が行う。
+// worker 側が行う。worker へは service binding 経由で到達する (Refs #133)。
 export default defineEventHandler(async (event) => {
-  const config = useRuntimeConfig()
-  const workerBase = config.public.egovWorkerBase as string
   const body = await readBody(event)
 
-  const res = await fetch(`${workerBase}/introspect`, {
+  const res = await egovWorkerFetch(event, '/introspect', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
