@@ -1660,6 +1660,51 @@ async function runInquiryTest(item: InquiryTestItem) {
     } catch { /* 自動検出失敗時は補完せず gate で skip */ }
   }
 
+  // 23-1/24-1 (電子納付) は「手数料納付（納付待ち）」案件の 到達番号 + 納付番号 + 手続ID が要る。
+  // 旧実装は納付手続をその場で新規申請していたが、申請直後は「到達」で納付番号が未発行
+  // (apply_pay_list が空) のため 24-1 が常に skip していた。府省が「納付待ち」に遷移させた
+  // 既存案件を申請一覧から自動探索し pay_number を取得して充填する (09-1/10-1 と同方式)。
+  // apply_list は proc_id を返さないため proc_name → TEST_PROCEDURES で proc_id を復元する
+  // (displayPaymentSite は proc_id 必須)。直近 90 日窓で走査 (納付待ちは pay_expired ~60日)。
+  // 23-1 が使う 950A010002018000 を優先採用し、無ければ解決可能な納付待ち案件に fallback。
+  if ((item.test_no === '23-1' || item.test_no === '24-1')
+      && (!inquiryState.paymentNumber || !inquiryState.payArriveId || !inquiryState.paymentProcId)) {
+    try {
+      const payFrom = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      const PAY_PROC_ID = '950A010002018000'
+      let payHit: { arrive_id: string; proc_id: string } | null = null
+      let payFallback: { arrive_id: string; proc_id: string } | null = null
+      for (let off = 1; off <= 1000 && !payHit; off += 50) {
+        const list = await client.listApplications({ date_from: payFrom, date_to: today, limit: 50, offset: off })
+        const apps = ((list.results as any)?.apply_list ?? []) as Array<{ arrive_id: string; pay_status?: string; proc_name?: string }>
+        for (const a of apps) {
+          if (a.pay_status !== '納付待ち') continue
+          const proc = TEST_PROCEDURES.find(p => p.name === a.proc_name)
+          if (!proc) continue
+          if (proc.proc_id === PAY_PROC_ID) { payHit = { arrive_id: a.arrive_id, proc_id: proc.proc_id }; break }
+          if (!payFallback) payFallback = { arrive_id: a.arrive_id, proc_id: proc.proc_id }
+        }
+        if (apps.length < 50) break
+      }
+      const chosen = payHit ?? payFallback
+      if (chosen) {
+        const pi = await client.getPaymentInfo(chosen.arrive_id)
+        const payList = ((pi.results as any)?.apply_pay_list ?? []) as Array<{ pay_number?: string }>
+        const payNo = payList.find(x => x.pay_number)?.pay_number
+        if (payNo) {
+          inquiryState.payArriveId = chosen.arrive_id
+          inquiryState.paymentProcId = chosen.proc_id
+          inquiryState.paymentNumber = payNo
+        }
+      }
+      // 24-1 には実在の financial_name が要る (22-1 未実行時の保険)
+      if (!inquiryState.bankName) {
+        try { inquiryState.bankName = firstFinancialName((await client.listPaymentBanks()).results) }
+        catch { /* 取得失敗時は 24-1 側の gate に委ねる */ }
+      }
+    } catch { /* 自動検出失敗時は既存値のまま (case 内で skip 判定) */ }
+  }
+
   // 準備データ (e-Gov 送付の到達番号/通番等) が「テストデータ設定」に入力済みなら走らせる。
   // 未入力時のみ skip。これで全 skip 項目が、データを入れれば実行・evidence 取得できる。
   const prepReady: Record<string, boolean> = {
@@ -2159,7 +2204,9 @@ async function runInquiryTest(item: InquiryTestItem) {
         const pay = (res.results as any)
         // payment 応答に proc_id は無い (results は arrive_id/proc_name/apply_pay_list のみ)。
         // displayPaymentSite (24-1) には納付手続そのものの proc_id を渡す。
-        inquiryState.paymentProcId = payProc.proc_id
+        // 上の自動探索で payArriveId に紐づく proc_id が既に解決済みなら上書きしない
+        // (探索が 950A010002018000 以外の納付待ち案件を採用した場合に整合を保つため)。
+        if (!inquiryState.paymentProcId) inquiryState.paymentProcId = payProc.proc_id
         if (pay?.apply_pay_list?.[0]?.pay_number) {
           inquiryState.paymentNumber = pay.apply_pay_list[0].pay_number
         }
