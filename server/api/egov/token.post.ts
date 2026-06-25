@@ -1,13 +1,37 @@
-// egov-staging worker への薄い proxy (Refs #91)。client_secret inject は
-// worker 側が行う。Nuxt app は client_secret を保持しない。
-// worker へは service binding 経由で到達する (Cloudflare Access 回避、Refs #133)。
+// e-Gov OAuth token endpoint を Nuxt worker から直接叩く。client_secret は
+// wrangler secret (NUXT_EGOV_CLIENT_SECRET → runtimeConfig.egovClientSecret) を inject。
+// egov-staging worker 経由 (Secrets Store binding) は CI deploy で binding が attach
+// されず env.EGOV_CLIENT_SECRET が undefined → 500 になったため直叩きに戻した (Refs #133)。
 export default defineEventHandler(async (event) => {
-  const body = await readBody(event)
+  const config = useRuntimeConfig(event)
+  const body = await readBody(event) as Record<string, string>
 
-  const res = await egovWorkerFetch(event, '/token', {
+  const clientId = config.public.egovClientId as string
+  const clientSecret = config.egovClientSecret as string
+  const authBase = config.public.egovAuthBase as string
+  const basicAuth = btoa(`${clientId}:${clientSecret}`)
+
+  const params = new URLSearchParams()
+  params.set('grant_type', body.grant_type)
+
+  if (body.grant_type === 'authorization_code') {
+    params.set('code', body.code)
+    params.set('redirect_uri', body.redirect_uri)
+    if (body.code_verifier) {
+      params.set('code_verifier', body.code_verifier)
+    }
+  }
+  else if (body.grant_type === 'refresh_token') {
+    params.set('refresh_token', body.refresh_token)
+  }
+
+  const res = await fetch(`${authBase}/token`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Authorization': `Basic ${basicAuth}`,
+    },
+    body: params,
   })
 
   const data = await res.json()
