@@ -1294,6 +1294,7 @@ onMounted(async () => {
   paymentArriveId.value = localStorage.getItem('egov_payment_arrive_id') ?? ''
   // 追加準備データは inquiryState (SDK state / egov_inquiry_state) から復元
   resubmitBaseArriveId.value = inquiryState.arriveId_09_base ?? ''
+  resubmit09InitialArriveId.value = inquiryState.arriveId_09_initial ?? ''
   informationId.value = inquiryState.informationId ?? ''
   paymentProcId.value = inquiryState.paymentProcId ?? ''
   paymentNumber.value = inquiryState.paymentNumber ?? ''
@@ -1315,7 +1316,10 @@ const postArriveId = ref('')
 const postId = ref('')
 const paymentArriveId = ref('')
 // 全 skip を実行可能にするための準備データ入力 (e-Gov 送付の ID を手入力)
-const resubmitBaseArriveId = ref('') // 09-1/10-1: 補正待ち案件の到達番号 (arriveId_09_base)
+const resubmitBaseArriveId = ref('') // 09-1 status check / 10-1 補正 target: 補正待ち案件の到達番号 (arriveId_09_base)
+// 09-1 の <初回受付番号> = 原申請の到達番号 (補正待ち case の親)。e-Gov 回答 (2026-07-07 Refs #144) より、
+// 再提出の <初回受付番号> は補正待ち case 自身ではなく、その親の原申請の到達番号を入れる必要がある。
+const resubmit09InitialArriveId = ref('') // 09-1: 原申請の到達番号 (arriveId_09_initial)
 const informationId = ref('')        // 17-1: お知らせID
 const paymentProcId = ref('')        // 24-1: 納付手続ID
 const paymentNumber = ref('')        // 24-1: 納付番号
@@ -1328,6 +1332,7 @@ function savePreparedIds() {
   localStorage.setItem('egov_payment_arrive_id', paymentArriveId.value)
   // 各 case が読む inquiryState field へ反映 (入力→実行の配線)。空入力は既存値 (prior test/SDK) を維持。
   if (resubmitBaseArriveId.value) inquiryState.arriveId_09_base = resubmitBaseArriveId.value
+  if (resubmit09InitialArriveId.value) inquiryState.arriveId_09_initial = resubmit09InitialArriveId.value
   if (informationId.value) inquiryState.informationId = informationId.value
   if (paymentArriveId.value) inquiryState.payArriveId = paymentArriveId.value
   if (paymentProcId.value) inquiryState.paymentProcId = paymentProcId.value
@@ -1612,12 +1617,19 @@ async function runInquiryTest(item: InquiryTestItem) {
   }
   const client = getClient()
 
-  // 09-1/10-1 (再提出/補正) は補正待ち案件の到達番号 (arriveId_09_base) が要る。通知一覧
-  // (type=補正) から「審査中（補正待ち）」の案件を自動検出し、arriveId_09_base が未設定
+  // 10-1 (部分補正) は amend target = <初回受付番号> = 補正待ち案件の到達番号 (arriveId_09_base) が要る。
+  // 通知一覧 (type=補正) から「審査中（補正待ち）」の案件を自動検出し、arriveId_09_base が未設定
   // または現在値が補正待ち案件でない (SDK state / 古い保存値による stale) 場合に上書きする。
   // 手動入力した値が実際の補正待ち案件なら検出 set に含まれるので上書きされない。補正待ち
   // 案件が無ければ補完されず従来通り skip。(token refresh 後に実行)
-  if (item.test_no === '09-1' || item.test_no === '10-1') {
+  //
+  // 09-1 (再提出) は同じ arriveId_09_base を status check には使うが、<初回受付番号> には
+  // arriveId_09_initial (原申請の到達番号 = 補正待ち case の親) を使う (Refs #144)。
+  // 補正待ち case で上書きすると status check は成立するが、原申請の値が失われるわけではない
+  // (別 field)。ただし 09-1 では手動入力の arriveId_09_base を上書きする挙動は user の意図
+  // (「この補正待ち case を status check target にしたい」) を裏切りやすいので、自動検出は
+  // 10-1 のみに限定する。09-1 では両フィールドとも手動入力で確定させる。
+  if (item.test_no === '10-1') {
     try {
       const nl = await client.listNotices({ date_from: '2020-11-24', date_to: today, limit: 50, offset: 0 })
       const hoseiList = ((nl.results as any)?.notice_list ?? []).filter((n: { type?: string }) => n.type === '補正')
@@ -1708,7 +1720,7 @@ async function runInquiryTest(item: InquiryTestItem) {
   // 準備データ (e-Gov 送付の到達番号/通番等) が「テストデータ設定」に入力済みなら走らせる。
   // 未入力時のみ skip。これで全 skip 項目が、データを入れれば実行・evidence 取得できる。
   const prepReady: Record<string, boolean> = {
-    '09-1': !!inquiryState.arriveId_09_base,
+    '09-1': !!inquiryState.arriveId_09_base && !!inquiryState.arriveId_09_initial,
     '10-1': !!inquiryState.arriveId_09_base,
     '19-1': !!preparedArriveId.value && !!preparedNoticeSubId.value,
     '20-1': !!preparedArriveId.value && !!preparedNoticeSubId.value,
@@ -1909,18 +1921,25 @@ async function runInquiryTest(item: InquiryTestItem) {
         break
       }
       case '09-1': {
-        // 再提出: 900A020700013000 で申請 → 補正待ちなら再提出
+        // 再提出: 補正待ち案件 (arriveId_09_base) に対する再提出。
+        // e-Gov API 仕様 (2026-07-07 回答, Refs #144):
+        //   <初回受付番号> = 原申請の到達番号 (補正待ち case の親)
+        //   = arriveId_09_initial (手動入力)。
+        //   補正待ち case (arriveId_09_base) 自身を <初回受付番号> にすると 400
+        //   (「構成管理XML.初回受付番号に誤りがあります」) になる。
+        // status check は補正待ち case (arriveId_09_base) で行う (原申請は既に「審査終了」で
+        // 補正待ちではない)。
         const procId09 = '900A020700013000'
-        // まず申請（submitOne で連署付き送信）
         const proc09 = TEST_PROCEDURES.find(p => p.proc_id === procId09)
-        // SDK state から補正待ち案件の arrive_id を取得（新規申請はしない）
-        let aid09 = inquiryState.arriveId_09_base
-        if (!aid09) throw new Error('900A020700013000 の申請送信失敗')
-        // ステータス確認
-        const detail09 = await client.getApplication(aid09)
+        const aid09Hosei = inquiryState.arriveId_09_base
+        const aid09Initial = inquiryState.arriveId_09_initial
+        if (!aid09Hosei) throw new Error('再提出/補正 到達番号 (補正待ち case) が未設定')
+        if (!aid09Initial) throw new Error('09-1 初回受付番号 (原申請の到達番号) が未設定')
+        // ステータス確認 (補正待ち case で)
+        const detail09 = await client.getApplication(aid09Hosei)
         if (!detail09.results.status.includes('補正待ち')) {
           r.status = 'skip'
-          r.error = `${aid09} status=${detail09.results.status}（補正待ちではない。sandbox遷移後に再実行）`
+          r.error = `${aid09Hosei} status=${detail09.results.status}（補正待ちではない。sandbox遷移後に再実行）`
           break
         }
         // 再提出用 ZIP
@@ -1928,12 +1947,12 @@ async function runInquiryTest(item: InquiryTestItem) {
         if (!proc09) throw new Error('手続 900A020700013000 not found')
         const zipData09r = Uint8Array.from(atob(sk09r.results.file_data), c => c.charCodeAt(0))
         const zip09r = await JSZip.loadAsync(zipData09r)
-        // submitOne 同等の充填 (氏名/住所/提出先/申請書属性情報/添付) + 申請種別=再提出 + 初回受付番号 + 署名
-        await buildStandardResubmit(zip09r, proc09, sk09r, '再提出', aid09)
+        // submitOne 同等の充填 (氏名/住所/提出先/申請書属性情報/添付) + 申請種別=再提出 + 初回受付番号 (原申請) + 署名
+        await buildStandardResubmit(zip09r, proc09, sk09r, '再提出', aid09Initial)
         const base64_09r = await zip09r.generateAsync({ type: 'base64' })
         inquiryState['zip_09-1'] = base64_09r // _04.ZIP
         const res09 = await client.submitApplication({ proc_id: procId09, send_file: { file_name: `${procId09}.zip`, file_data: base64_09r } })
-        r.response = `arrive_id=${res09.results.arrive_id} (初回=${aid09})`
+        r.response = `arrive_id=${res09.results.arrive_id} (初回=${aid09Initial}, 補正待ち=${aid09Hosei})`
         break
       }
       case '10-1': {
@@ -2903,7 +2922,9 @@ const inquiryDoneCount = computed(() => [...inquiryResults.value.values()].filte
           <label>電子送達 post_id:</label>
           <input v-model="postId" @change="savePreparedIds" placeholder="30-1/31-1用" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px; font-family: monospace;" />
           <label>再提出/補正 到達番号:</label>
-          <input v-model="resubmitBaseArriveId" @change="savePreparedIds" placeholder="09-1/10-1用 (補正待ち案件)" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px; font-family: monospace;" />
+          <input v-model="resubmitBaseArriveId" @change="savePreparedIds" placeholder="09-1 status check / 10-1 amend target (補正待ち案件)" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px; font-family: monospace;" />
+          <label>09-1 初回受付番号 (原申請):</label>
+          <input v-model="resubmit09InitialArriveId" @change="savePreparedIds" placeholder="09-1用 (補正待ち case の親の到達番号)" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px; font-family: monospace;" />
           <label>お知らせID:</label>
           <input v-model="informationId" @change="savePreparedIds" placeholder="17-1用" style="padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px; font-family: monospace;" />
           <label>納付 手続ID:</label>
