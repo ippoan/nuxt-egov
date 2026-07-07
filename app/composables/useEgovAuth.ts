@@ -163,12 +163,33 @@ export function useEgovAuth() {
     }
   }
 
-  function logout() {
+  async function logout() {
+    // e-Gov OP の browser session cookie を消さないと次回 authorize で silent SSO が発動し、
+    // ログアウトが効いていないように見える (Refs #146)。3 段構成でクリアする。
+    const rt = refreshToken.value
+
+    // 1. Backchannel: refresh_token を e-Gov OP 側で失効 (server proxy 経由、client_secret 必要)
+    //    ネットワーク失敗しても local 状態は必ずクリアするため best-effort。
+    if (rt) {
+      try {
+        await $fetch('/api/egov/logout', {
+          method: 'POST',
+          body: { refresh_token: rt },
+        })
+      } catch { /* best-effort — 続行 */ }
+    }
+
+    // 2. Local state をクリア
     accessToken.value = null
     refreshToken.value = null
     tokenExpiresAt.value = 0
     if (import.meta.client) {
       localStorage.removeItem('egov_tokens')
+      // 3. Frontchannel: OP session cookie を消すため e-Gov の logout URL に redirect
+      const url = new URL(`${authBase}/logout`)
+      url.searchParams.set('post_logout_redirect_uri', `${window.location.origin}/`)
+      url.searchParams.set('client_id', clientId)
+      window.location.href = url.toString()
     }
   }
 
