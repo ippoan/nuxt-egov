@@ -22,6 +22,17 @@ function findXslReference(xmlString: string): string | null {
   return match?.[1] ?? null
 }
 
+// iframe srcdoc に生 HTML として流すため、ZIP 由来のファイル名やエラー文言は
+// 必ず HTML エスケープする (悪意ある ZIP からの XSS 防止)
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function transformXslt(xmlString: string, xslString: string): string {
   const parser = new DOMParser()
   const xmlDoc = parser.parseFromString(xmlString, 'application/xml')
@@ -95,8 +106,8 @@ async function processDocumentZip(zip: JSZip): Promise<DocumentPackage> {
     try {
       renderedHtml = transformXslt(content, xslContent)
     } catch (e) {
-      renderedHtml = `<p style="color:#c00;padding:1rem">「${fileName}」の変換に失敗しました: ${
-        e instanceof Error ? e.message : String(e)
+      renderedHtml = `<p style="color:#c00;padding:1rem">「${escapeHtml(fileName)}」の変換に失敗しました: ${
+        escapeHtml(e instanceof Error ? e.message : String(e))
       }</p>`
     }
     documents.push({
