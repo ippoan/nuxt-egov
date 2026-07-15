@@ -22,17 +22,45 @@ function findXslReference(xmlString: string): string | null {
   return match?.[1] ?? null
 }
 
+// iframe srcdoc に生 HTML として流すため、ZIP 由来のファイル名やエラー文言は
+// 必ず HTML エスケープする (悪意ある ZIP からの XSS 防止)
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function transformXslt(xmlString: string, xslString: string): string {
   const parser = new DOMParser()
   const xmlDoc = parser.parseFromString(xmlString, 'application/xml')
   const xslDoc = parser.parseFromString(xslString, 'application/xml')
 
+  // DOMParser は失敗しても throw せず <parsererror> を埋め込むため明示的に検出する
+  const parseErr
+    = xmlDoc.querySelector('parsererror') ?? xslDoc.querySelector('parsererror')
+  if (parseErr) {
+    throw new Error(`XML/XSL の解析に失敗しました: ${parseErr.textContent?.trim() ?? ''}`)
+  }
+
   const processor = new XSLTProcessor()
   processor.importStylesheet(xslDoc)
-  const resultDoc = processor.transformToDocument(xmlDoc)
+
+  // e-Gov の XSL は <xsl:output method="html"/> を使う。transformToDocument は
+  // HTML 出力メソッドのとき Blink では null を返し、serializeToString(null) が
+  // "parameter 1 is not of type 'Node'" で落ちる。出力メソッドに依存しない
+  // transformToFragment で DocumentFragment を得てシリアライズする。
+  const fragment = processor.transformToFragment(xmlDoc, document)
+  if (!fragment) {
+    throw new Error('XSLT 変換結果が空でした')
+  }
 
   const serializer = new XMLSerializer()
-  return serializer.serializeToString(resultDoc)
+  return Array.from(fragment.childNodes)
+    .map(node => serializer.serializeToString(node))
+    .join('')
 }
 
 function classifyXml(fileName: string): 'letter' | 'form' {
@@ -73,7 +101,15 @@ async function processDocumentZip(zip: JSZip): Promise<DocumentPackage> {
     const xslContent = fileContents.get(xslRef)
     if (!xslContent) continue
 
-    const renderedHtml = transformXslt(content, xslContent)
+    // 1 文書の変換失敗で ZIP 全体を落とさない（他の文書 / CSV は表示する）
+    let renderedHtml: string
+    try {
+      renderedHtml = transformXslt(content, xslContent)
+    } catch (e) {
+      renderedHtml = `<p style="color:#c00;padding:1rem">「${escapeHtml(fileName)}」の変換に失敗しました: ${
+        escapeHtml(e instanceof Error ? e.message : String(e))
+      }</p>`
+    }
     documents.push({
       type: classifyXml(fileName),
       xmlFileName: fileName,
