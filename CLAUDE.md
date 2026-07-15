@@ -18,9 +18,10 @@ e-Gov 電子申請サービスのチェックツール。Nuxt 4 + Cloudflare Wor
 
 ## デプロイ
 
-- staging: https://egov-check-staging.ippoan.org（PR時に自動デプロイ）
-- production: https://egov-check.ippoan.org（tag push時）
+- staging: https://egov-check-staging.ippoan.org（PR時に自動デプロイ。**唯一の稼働環境**）
+- tagless（マージ/PR 駆動）: `v*` タグは切らない。Release Wave 非参加（Refs #151）
 - CI: `ippoan/ci-workflows` reusable workflow
+- 未使用: 本番 `egov-check.ippoan.org`（旧 tag 駆動 root config は残置だがデプロイされない）
 
 ## 環境変数
 

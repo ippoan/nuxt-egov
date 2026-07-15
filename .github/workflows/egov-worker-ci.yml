@@ -7,7 +7,6 @@ name: egov-worker CI
 on:
   push:
     branches: [main]
-    tags: ['v*']
     paths:
       - 'workers/egov/**'
       - '.github/workflows/egov-worker-ci.yml'
