@@ -383,7 +383,7 @@ const REQUIRED_ATTACHMENTS: Record<string, Array<{ docName: string; fileName: st
   ],
 }
 
-async function submitOne(proc: TestProcedure, clearLog = false) {
+async function submitOne(proc: TestProcedure, clearLog = false, opts: { forceReal?: boolean } = {}) {
   if (clearLog) errorLog.value = ''
   const r: ProcedureResult = { proc_id: proc.proc_id, status: 'skeleton' }
   results.value.set(proc.proc_id, r)
@@ -874,7 +874,9 @@ async function submitOne(proc: TestProcedure, clearLog = false) {
     // GビズIDモード: 署名不要で本番送信（署名省略可の手続は署名なしで成功）
     // 署名モード: 署名必要手続のみ本番送信
     // それ以外: Trial送信
-    const useRealSubmit = useGbizId.value || (enableSign.value && proc.signatureRequired)
+    // forceReal: 呼び出し側が本番送信を強制 (27-1 電子送達利用申込み等、Trial では
+    // e-Gov 側に実施記録が残らず最終確認試験 NG になるもの。Refs #153)
+    const useRealSubmit = opts.forceReal || useGbizId.value || (enableSign.value && proc.signatureRequired)
     if (!useRealSubmit) {
       submitHeaders['X-eGovAPI-Trial'] = 'true'
     }
@@ -2079,8 +2081,22 @@ async function runInquiryTest(item: InquiryTestItem) {
       case '13-1': {
         const sn = inquiryState.sendNumber_08_1
         if (!sn) throw new Error('08-1を先に実行してください')
-        const res = await client.listApplications({ send_number: sn })
-        r.response = `count=${res.resultset?.count ?? 'N/A'}, send_number=${sn}`
+        // bulk 送信 (08-1) は 202 = 非同期受付で、e-Gov 側の取り込み完了までは
+        // send_number 検索が 0 件を返す。0 件のまま pass にすると「取得件数が0件のため
+        // 確認事項を満たしていません」で NG になる (2026-07-15 指摘、Refs #153)。
+        // count>=1 になるまで poll し、期限内に 1 件も出なければ error にする。
+        const deadline13 = Date.now() + 5 * 60_000
+        let res = await client.listApplications({ send_number: sn })
+        while ((res.resultset?.count ?? 0) === 0 && Date.now() < deadline13) {
+          currentProc.value = `13-1: bulk 取り込み待ち (count=0)。15秒後に再試行...`
+          await new Promise(resolve => setTimeout(resolve, 15_000))
+          res = await client.listApplications({ send_number: sn })
+        }
+        const count13 = res.resultset?.count ?? 0
+        if (count13 === 0) {
+          throw new Error(`取得件数が0件のままです (send_number=${sn})。bulk 取り込み未完了か送信失敗の可能性。時間をおいて 13-1 のみ再実行してください。`)
+        }
+        r.response = `count=${count13}, send_number=${sn}`
         break
       }
       case '13-2': {
@@ -2249,11 +2265,16 @@ async function runInquiryTest(item: InquiryTestItem) {
         break
       }
       case '27-1': {
-        // 電子送達利用申込み — 既存 submitOne で送信
+        // 電子送達利用申込み — 既存 submitOne で送信。
+        // 本手続は signatureRequired: false のため、署名モードでは Trial 送信になり
+        // e-Gov 側に「利用申込みの実施」記録が残らず NG になる (2026-07-15 指摘)。
+        // forceReal で X-eGovAPI-Trial なしの本番送信に固定する (Refs #153)。
         const proc27 = TEST_PROCEDURES.find(p => p.proc_id === '900A013800001000')
         if (!proc27) throw new Error('電子送達手続 900A013800001000 not found')
-        await submitOne(proc27)
+        await submitOne(proc27, false, { forceReal: true })
+        if (lastSentZip[proc27.proc_id]) inquiryState['zip_27-1'] = lastSentZip[proc27.proc_id]! // _04.ZIP
         const res27 = results.value.get(proc27.proc_id)
+        pushApplyEvidence(res27) // /post-apply 応答を _01〜_03 エビデンスに記録 (無いと「手続選択」のみになり NG)
         if (res27?.status === 'done' && res27.arrive_id) {
           postArriveId.value = res27.arrive_id
           savePreparedIds()
@@ -2500,6 +2521,8 @@ function buildMailBodies(softwareId: string, receiptNo: string) {
     '　- 最終確認試験テスト仕様書兼成績書（final_confirmation_test_specification_grades_v2.xlsx）',
     `　- テスト結果格納フォルダ ${softwareId}_${receiptNo}`,
     '',
+    '※ 2026/7/15 にご指摘いただいた NG 2件（試験No.13-1 申請案件一覧取得、試験No.27-1 電子送達利用申込み）を再実施し、',
+    '　合格済み分も含めた全件を纏めて再提出しております。',
     '※ アカウント間情報共有（試験No.32-1〜36-1）は、検証用GビズID未取得のため本提出の対象外としています。',
     '',
     '解凍パスワードは別メール「最終確認試験結果の提出 (パスワード)」にてお送りいたします。',
