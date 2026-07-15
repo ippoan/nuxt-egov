@@ -33,10 +33,19 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;')
 }
 
+// e-Gov の一部 XSL (yoshiki_04_shakai_003.xsl 等) は先頭に UTF-8 BOM が付く。
+// BOM が残ったまま DOMParser に渡すと "Unexpected characters outside the root
+// element" で parse error になる。JSZip のデコード経路により BOM は U+FEFF
+// または生バイト列 (ï»¿) として現れうるため、どちらも先頭で除去する。
+function stripBom(s: string): string {
+  // ﻿ = 正しくデコードされた BOM、ï»¿ = 誤デコード (ï»¿) の両方
+  return s.replace(/^(?:﻿|ï»¿)/, '')
+}
+
 function transformXslt(xmlString: string, xslString: string): string {
   const parser = new DOMParser()
-  const xmlDoc = parser.parseFromString(xmlString, 'application/xml')
-  const xslDoc = parser.parseFromString(xslString, 'application/xml')
+  const xmlDoc = parser.parseFromString(stripBom(xmlString), 'application/xml')
+  const xslDoc = parser.parseFromString(stripBom(xslString), 'application/xml')
 
   // DOMParser は失敗しても throw せず <parsererror> を埋め込むため明示的に検出する
   const parseErr
@@ -48,19 +57,18 @@ function transformXslt(xmlString: string, xslString: string): string {
   const processor = new XSLTProcessor()
   processor.importStylesheet(xslDoc)
 
-  // e-Gov の XSL は <xsl:output method="html"/> を使う。transformToDocument は
-  // HTML 出力メソッドのとき Blink では null を返し、serializeToString(null) が
-  // "parameter 1 is not of type 'Node'" で落ちる。出力メソッドに依存しない
-  // transformToFragment で DocumentFragment を得てシリアライズする。
-  const fragment = processor.transformToFragment(xmlDoc, document)
-  if (!fragment) {
+  // e-Gov の XSL (kagami.xsl / yoshiki_*.xsl) は完全な <html> 文書を出力する。
+  // 実ブラウザ検証では transformToDocument が正しく Document を返す一方、
+  // transformToFragment は kagami.xsl で null になる。元の null クラッシュの
+  // 真因は XSL 先頭の BOM による parse error (→ importStylesheet 失敗 →
+  // transformToDocument が null) だったため、BOM を除去した上で
+  // transformToDocument を使う。
+  const resultDoc = processor.transformToDocument(xmlDoc)
+  if (!resultDoc) {
     throw new Error('XSLT 変換結果が空でした')
   }
 
-  const serializer = new XMLSerializer()
-  return Array.from(fragment.childNodes)
-    .map(node => serializer.serializeToString(node))
-    .join('')
+  return new XMLSerializer().serializeToString(resultDoc)
 }
 
 function classifyXml(fileName: string): 'letter' | 'form' {
