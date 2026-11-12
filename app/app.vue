@@ -29,6 +29,16 @@ body {
   margin-bottom: 1.5rem;
 }
 
+.header-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.header-actions a.btn {
+  text-decoration: none;
+}
+
 h1 {
   font-size: 1.5rem;
   color: #1a365d;

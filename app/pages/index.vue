@@ -66,9 +66,12 @@ async function fetchApplications() {
         e-Gov 申請状況チェック
         <span class="env-badge" :class="isProd ? 'env-prod' : 'env-sbx'">{{ isProd ? '本番' : '検証環境' }}</span>
       </h1>
-      <NuxtLink to="/documents" class="btn btn-secondary">
-        公文書ビューア
-      </NuxtLink>
+      <div class="header-actions">
+        <OpenInEgovButton />
+        <NuxtLink to="/documents" class="btn btn-secondary">
+          公文書ビューア
+        </NuxtLink>
+      </div>
     </div>
 
     <div v-if="!isAuthenticated" class="login-section">

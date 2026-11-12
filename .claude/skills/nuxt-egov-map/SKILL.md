@@ -19,7 +19,7 @@ e-Gov API は `server/api/egov/` プロキシ経由で叩く。e-Gov は **検�
 | 区画 | 主要ファイル | 役割 |
 |---|---|---|
 | **pages** | `app/pages/{index,final-test,documents,callback}.vue`, `app/pages/apply/[arriveId].vue` | 申請一覧(状況確認。行クリックで詳細へ) / 最終確認試験(送信・記録) / 公文書ビューア / OAuth callback / 申請の詳細 (状況・通知・公文書・納付) |
-| **components** | `app/components/DocumentPackageView.vue` | 公文書 ZIP の描画 (公文書ビューアと申請の詳細で共用) |
+| **components** | `app/components/{DocumentPackageView,OpenInEgovButton}.vue` | 公文書 ZIP の描画 (公文書ビューアと申請の詳細で共用) / 「e-Gov で開く」(本番だけ。client-startup3 でアプリのマイページへ。申請書・添付は API v2 で取れないための逃げ道) |
 | **composables** | `app/composables/{useEgovAuth,useDocumentViewer,useXmlSign}.ts` | OAuth2 認証 (SDK 使用) / 公文書表示 / XML 署名 |
 | **utils (XML 署名)** | `app/utils/xmldsig/{c14n,pfx,sign,types}.ts` | C14N 正規化 / PFX(PKCS12) 読込 / xmldsig 署名生成 |
 | **utils (手続定義)** | `app/utils/finalTestProcedures.ts` | 最終確認試験の手続リスト・テスト値構築 |
