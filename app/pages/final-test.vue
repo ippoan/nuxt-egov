@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// 最終確認試験は検証環境 (sbx) 専用。本番 (egov-check.ippoan.org) では申請を送らせない
-// ため一覧へ戻す (本番の egov-prod worker も /api/** の GET 以外を 405 で拒否する)。
+// 最終確認試験は検証環境 (sbx) 専用。本番 (egov-check.ippoan.org) では試験の申請を
+// 送らないよう、この画面は開かずに一覧へ戻す。
 definePageMeta({
   middleware: () => {
     if (useRuntimeConfig().public.egovEnv === 'prod') return navigateTo('/')
