@@ -129,13 +129,19 @@ function closeOfficialDocument() {
         申請の詳細
         <span class="env-badge" :class="isProd ? 'env-prod' : 'env-sbx'">{{ isProd ? '本番' : '検証環境' }}</span>
       </h1>
-      <NuxtLink to="/" class="btn btn-secondary">
-        申請一覧へ戻る
-      </NuxtLink>
+      <div class="header-actions">
+        <OpenInEgovButton />
+        <NuxtLink to="/" class="btn btn-secondary">
+          申請一覧へ戻る
+        </NuxtLink>
+      </div>
     </div>
 
     <p class="arrive-id">
       到達番号 <span class="mono">{{ arriveId }}</span>
+    </p>
+    <p v-if="isProd" class="egov-hint">
+      申請書や添付ファイルは API では取れません。「e-Gov で開く」でアプリのマイページを開き、申請案件一覧でこの到達番号の案件を開いてください。
     </p>
 
     <div v-if="!hasSession" class="login-section">
@@ -349,9 +355,15 @@ function closeOfficialDocument() {
 
 <style scoped>
 .arrive-id {
-  margin-bottom: 1rem;
+  margin-bottom: 0.5rem;
   color: #4a5568;
   font-size: 0.9rem;
+}
+
+.egov-hint {
+  margin-bottom: 1rem;
+  color: #718096;
+  font-size: 0.8rem;
 }
 
 .card {
