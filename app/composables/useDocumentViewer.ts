@@ -151,13 +151,14 @@ export function useDocumentViewer() {
     () => documentPackage.value?.csvFiles ?? [],
   )
 
-  async function processFile(file: File) {
+  // 公文書 ZIP (二重 ZIP 対応) を読んで描画する。ファイル選択でも、
+  // 申請の詳細画面で e-Gov API から取った公文書 (base64 → ArrayBuffer) でも使う。
+  async function processBuffer(buffer: ArrayBuffer) {
     loading.value = true
     error.value = null
     documentPackage.value = null
 
     try {
-      const buffer = await file.arrayBuffer()
       const outerZip = await JSZip.loadAsync(buffer)
 
       // 内側 ZIP を探す（二重 ZIP 対応）
@@ -185,6 +186,10 @@ export function useDocumentViewer() {
     }
   }
 
+  async function processFile(file: File) {
+    await processBuffer(await file.arrayBuffer())
+  }
+
   function reset() {
     documentPackage.value = null
     error.value = null
@@ -198,6 +203,7 @@ export function useDocumentViewer() {
     forms,
     csvFiles,
     processFile,
+    processBuffer,
     reset,
   }
 }

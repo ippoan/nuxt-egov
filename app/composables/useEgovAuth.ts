@@ -28,6 +28,8 @@ export function useEgovAuth() {
   const refreshToken = useState<string | null>('egov_refresh_token', () => null)
   const tokenExpiresAt = useState<number>('egov_token_expires_at', () => 0)
   const isAuthenticated = computed(() => !!accessToken.value && Date.now() < tokenExpiresAt.value)
+  // アクセストークンが切れていても refresh token があれば apiFetch が取り直せる。
+  const hasSession = computed(() => isAuthenticated.value || !!refreshToken.value)
 
   const client = new EgovClient({
     apiBase: '/api/egov',
@@ -237,6 +239,7 @@ export function useEgovAuth() {
   return {
     accessToken: readonly(accessToken),
     isAuthenticated,
+    hasSession,
     startLogin,
     handleCallback,
     refreshAccessToken,

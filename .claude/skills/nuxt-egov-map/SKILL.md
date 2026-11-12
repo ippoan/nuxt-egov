@@ -18,10 +18,12 @@ e-Gov API は `server/api/egov/` プロキシ経由で叩く。e-Gov は **検�
 
 | 区画 | 主要ファイル | 役割 |
 |---|---|---|
-| **pages** | `app/pages/{index,final-test,documents,callback}.vue` | 申請一覧(状況確認) / 最終確認試験(送信・記録) / 公文書ビューア / OAuth callback |
+| **pages** | `app/pages/{index,final-test,documents,callback}.vue`, `app/pages/apply/[arriveId].vue` | 申請一覧(状況確認。行クリックで詳細へ) / 最終確認試験(送信・記録) / 公文書ビューア / OAuth callback / 申請の詳細 (状況・通知・公文書・納付) |
+| **components** | `app/components/DocumentPackageView.vue` | 公文書 ZIP の描画 (公文書ビューアと申請の詳細で共用) |
 | **composables** | `app/composables/{useEgovAuth,useDocumentViewer,useXmlSign}.ts` | OAuth2 認証 (SDK 使用) / 公文書表示 / XML 署名 |
 | **utils (XML 署名)** | `app/utils/xmldsig/{c14n,pfx,sign,types}.ts` | C14N 正規化 / PFX(PKCS12) 読込 / xmldsig 署名生成 |
 | **utils (手続定義)** | `app/utils/finalTestProcedures.ts` | 最終確認試験の手続リスト・テスト値構築 |
+| **utils (表示)** | `app/utils/applyStatus.ts` | 申請ステータスの表示色 |
 | **server/api (e-Gov proxy)** | `server/api/egov/{[...path],token.post,introspect.post,logout.post}.ts` | e-Gov API 透過プロキシ / token / introspect / logout |
 | **server/api (spec/sdk)** | `server/api/{sdk-state.get,spec-test-data.{get,post}}.ts` | SDK 状態 / spec テストデータ |
 | **workers/egov** | `workers/egov/src/index.ts` | client_secret を持つ別 Worker (`egov-staging`)。`EGOV_CLIENT_SECRET` binding |
@@ -57,6 +59,8 @@ e-Gov API は `server/api/egov/` プロキシ経由で叩く。e-Gov は **検�
 - No.22 (電子送達) は `/post-apply`、それ以外は `/apply`。必須添付の手続は `dummy.txt` を添付。
 - spec は `spec/` (`.gitignore` 対象)、`egov-spec` skill で取得。
 - ローカル確認は worktree で build → `wrangler dev` → Cloudflare Tunnel `test-nuxt.ippoan.org`。メイン wt では build しない (hook がソース編集禁止)。CDP debug は `window._egovToken` でトークン取得可。
+- 共通 CSS (`.container` `.btn` `.table` 等) は `app/app.vue` のグローバル style。ページ側に置くと直リンクで開いたページに効かない。
+- 申請の詳細で公文書を表示しても取得完了 (POST /official_document) は打たない。見るだけで e-Gov 側の「取得完了」を立てないため。
 - README.md は Nuxt の boilerplate (実態は CLAUDE.md が正)。
 
 ## CCoW / CI から見た立ち位置

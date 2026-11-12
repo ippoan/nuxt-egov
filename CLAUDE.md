@@ -4,7 +4,8 @@ e-Gov 電子申請サービスのチェックツール。Nuxt 4 + Cloudflare Wor
 
 ## 構成
 
-- `app/pages/index.vue` — 申請一覧（状況確認）
+- `app/pages/index.vue` — 申請一覧（状況確認）。行クリックで詳細へ
+- `app/pages/apply/[arriveId].vue` — 申請の詳細（状況・通知・公文書・納付）
 - `app/pages/final-test.vue` — 最終確認試験（申請送信・結果記録）
 - `app/pages/documents.vue` — 公文書ビューア
 - `app/composables/useEgovAuth.ts` — OAuth2 認証（`@ippoan/egov-shinsei-sdk` 使用）
