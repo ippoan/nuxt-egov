@@ -41,6 +41,8 @@ export default defineNuxtConfig({
     // Nuxt worker から e-Gov を直接叩く方式に戻した (Refs #133)。
     egovClientSecret: '',
     public: {
+      // 'sbx' (検証環境) | 'prod' (本番)。本番では最終確認試験 (申請送信) を出さない。
+      egovEnv: 'sbx',
       egovClientId: '',
       egovRedirectUri: '',
       egovAuthBase: 'https://account2.sbx.e-gov.go.jp/auth',

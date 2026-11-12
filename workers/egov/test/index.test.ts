@@ -101,6 +101,20 @@ describe('POST /token', () => {
     expect(body.received_auth).toBe(`Basic ${btoa('client-id:client-secret')}`);
   });
 
+  it('reads client_id from a Secrets Store binding (prod)', async () => {
+    const res = await worker.fetch(
+      new Request('https://w/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: 'rt-1' }),
+      }),
+      makeEnv({ EGOV_CLIENT_ID: makeSecret('prod-id') }),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json() as { received_auth: string };
+    expect(body.received_auth).toBe(`Basic ${btoa('prod-id:client-secret')}`);
+  });
+
   it('refreshes via refresh_token grant', async () => {
     const res = await worker.fetch(
       new Request('https://w/token', {
@@ -147,6 +161,39 @@ describe('/api/* proxy', () => {
     expect(body.proxied).toBe(true);
     expect(body.url).toBe('https://api.test/v2/procedures/123?foo=bar');
     expect(body.forwarded_auth).toBe('Bearer caller-token');
+  });
+
+  it('allows GET when EGOV_READ_ONLY=true', async () => {
+    const res = await worker.fetch(
+      new Request('https://w/api/apply/lists', { headers: { 'authorization': 'Bearer t' } }),
+      makeEnv({ EGOV_READ_ONLY: 'true' }),
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it('rejects POST with 405 when EGOV_READ_ONLY=true', async () => {
+    const res = await worker.fetch(
+      new Request('https://w/api/apply', {
+        method: 'POST',
+        headers: { 'authorization': 'Bearer t', 'content-type': 'application/json' },
+        body: '{}',
+      }),
+      makeEnv({ EGOV_READ_ONLY: 'true' }),
+    );
+    expect(res.status).toBe(405);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it('forwards POST when not read-only', async () => {
+    const res = await worker.fetch(
+      new Request('https://w/api/apply', {
+        method: 'POST',
+        headers: { 'authorization': 'Bearer t', 'content-type': 'application/json', 'x-egovapi-trial': 'true' },
+        body: '{}',
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(200);
   });
 });
 

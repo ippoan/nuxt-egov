@@ -18,14 +18,24 @@ e-Gov 電子申請サービスのチェックツール。Nuxt 4 + Cloudflare Wor
 
 ## デプロイ
 
-- staging: https://egov-check-staging.ippoan.org（PR時に自動デプロイ。**唯一の稼働環境**）
+- staging: https://egov-check-staging.ippoan.org（PR時に自動デプロイ。e-Gov **検証環境 (sbx)** につながる）
+- 本番: https://egov-check.ippoan.org（main への push で `.github/workflows/deploy-prod.yml` が配信。e-Gov **本番環境**につながる。申請状況の照会専用）
+  - 画面 `egov-check` (repo 直下 wrangler.jsonc の top-level) → service binding → `egov-prod` (workers/egov の `[env.prod]`、公開ドメイン無し)
+  - 本番の client_id / client_secret は repo に書かない。GCP `NUXT_PUBLIC_EGOV_CLIENT_ID_PROD` / `NUXT_EGOV_CLIENT_SECRET_PROD` を正とし、
+    sync_from_gcp で GitHub secret (画面の worker secret 用) と CF Secrets Store (egov-prod の binding 用) に写す
+  - 本番では `/api/**` の GET 以外を egov-prod が 405 で拒否し、`/final-test` は一覧へ戻す (`NUXT_PUBLIC_EGOV_ENV=prod`)
+  - `secrets_store_secrets` は wrangler 3 では黙って無視されるため、本番は wrangler 4 で配信する
 - tagless（マージ/PR 駆動）: `v*` タグは切らない。Release Wave 非参加（Refs #151）
 - CI: `ippoan/ci-workflows` reusable workflow
-- 未使用: 本番 `egov-check.ippoan.org`（旧 tag 駆動 root config は残置だがデプロイされない）
 
 ## 環境変数
 
 `wrangler.jsonc` の `vars` に設定済み。`NUXT_EGOV_CLIENT_SECRET` のみ `wrangler secret` で管理。
+
+## e-Gov 本番環境
+
+- API: `https://api.e-gov.go.jp/shinsei/v2`
+- 認証: `https://account.e-gov.go.jp/auth`
 
 ## e-Gov 検証環境
 

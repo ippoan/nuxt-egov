@@ -1,5 +1,6 @@
 <script setup lang="ts">
 const { isAuthenticated, startLogin, logout, apiFetch } = useEgovAuth()
+const isProd = useRuntimeConfig().public.egovEnv === 'prod'
 
 interface ApplyItem {
   no: number
@@ -58,7 +59,10 @@ async function fetchApplications() {
 <template>
   <div class="container">
     <div class="header">
-      <h1>e-Gov 申請状況チェック</h1>
+      <h1>
+        e-Gov 申請状況チェック
+        <span class="env-badge" :class="isProd ? 'env-prod' : 'env-sbx'">{{ isProd ? '本番' : '検証環境' }}</span>
+      </h1>
       <NuxtLink to="/documents" class="btn btn-secondary">
         公文書ビューア
       </NuxtLink>
@@ -298,6 +302,24 @@ h1 {
 .mono {
   font-family: 'Menlo', 'Consolas', monospace;
   font-size: 0.8rem;
+}
+
+.env-badge {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.5em;
+  vertical-align: middle;
+}
+
+.env-prod {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.env-sbx {
+  background: #fff3e0;
+  color: #e65100;
 }
 
 .status-badge {

@@ -50,3 +50,43 @@ custom_domain = true
 binding = "EGOV_CLIENT_SECRET"
 store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
 secret_name = "NUXT_EGOV_CLIENT_SECRET"
+
+# ---------------------------------------------------------------------------
+# 本番 (e-Gov 電子申請 API の本番環境)。`wrangler deploy --config wrangler.toml --env prod`
+# で `egov-prod` として配信する (.github/workflows/deploy-prod.yml)。
+#
+# - 公開ドメインは持たない: 本番の画面 (egov-check) から service binding だけで呼ぶ
+#   (routes / workers_dev は env へ継承されるため明示的に空 / false にする)。
+# - client_id / client_secret は repo に書かない。GCP Secret Manager の
+#   `NUXT_PUBLIC_EGOV_CLIENT_ID_PROD` / `NUXT_EGOV_CLIENT_SECRET_PROD` を
+#   secrets-inventory の sync_from_gcp (targets=cf) で Secrets Store に写したものを binding する。
+# - EGOV_READ_ONLY=true: `/api/**` は GET / HEAD だけ通す (本番は申請状況の照会だけに使い、
+#   申請の送信はこの worker からはできない)。
+# ---------------------------------------------------------------------------
+[env.prod]
+name = "egov-prod"
+workers_dev = false
+routes = []
+
+[env.prod.vars]
+EGOV_AUTH_BASE = "https://account.e-gov.go.jp/auth"
+EGOV_API_BASE = "https://api.e-gov.go.jp/shinsei/v2"
+EGOV_READ_ONLY = "true"
+
+[env.prod.observability]
+enabled = true
+head_sampling_rate = 1
+
+[[env.prod.durable_objects.bindings]]
+name = "MCP_OBJECT"
+class_name = "EgovMcp"
+
+[[env.prod.secrets_store_secrets]]
+binding = "EGOV_CLIENT_ID"
+store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
+secret_name = "NUXT_PUBLIC_EGOV_CLIENT_ID_PROD"
+
+[[env.prod.secrets_store_secrets]]
+binding = "EGOV_CLIENT_SECRET"
+store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
+secret_name = "NUXT_EGOV_CLIENT_SECRET_PROD"

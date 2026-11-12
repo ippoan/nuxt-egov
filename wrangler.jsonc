@@ -20,14 +20,20 @@
   "secrets": {
     "required": []
   },
+  // top-level = 本番 (e-Gov 電子申請 API の本番環境)。.github/workflows/deploy-prod.yml が
+  // main への push で配信する。本番の client_id / client_secret は repo に書かず、
+  // 同 workflow が GitHub secret (GCP Secret Manager の
+  // NUXT_PUBLIC_EGOV_CLIENT_ID_PROD / NUXT_EGOV_CLIENT_SECRET_PROD を sync_from_gcp で
+  // 写したもの) から `wrangler secret bulk` で worker secret
+  // NUXT_PUBLIC_EGOV_CLIENT_ID / NUXT_EGOV_CLIENT_SECRET に入れる。
+  // (var と secret は同名を持てないため、ここに NUXT_PUBLIC_EGOV_CLIENT_ID は置かない)
   "vars": {
-    "NUXT_PUBLIC_EGOV_CLIENT_ID": "K26XGOmbDusxfKsp",
+    "NUXT_PUBLIC_EGOV_ENV": "prod",
     "NUXT_PUBLIC_EGOV_REDIRECT_URI": "https://egov-check.ippoan.org/callback",
-    "NUXT_PUBLIC_EGOV_AUTH_BASE": "https://account2.sbx.e-gov.go.jp/auth",
-    "NUXT_PUBLIC_EGOV_API_BASE": "https://api2.sbx.e-gov.go.jp/shinsei/v2",
-    // e-Gov 呼び出しを集約する worker (Refs #91)。prod worker (egov.ippoan.org)
-    // は未セットアップ (#91 Out of scope) かつ prod/staging とも試験 API のみを
-    // 叩くため、当面は staging worker を共用する。
+    "NUXT_PUBLIC_EGOV_AUTH_BASE": "https://account.e-gov.go.jp/auth",
+    "NUXT_PUBLIC_EGOV_API_BASE": "https://api.e-gov.go.jp/shinsei/v2",
+    // 本番の e-Gov 呼び出しは egov-prod worker (公開ドメイン無し・service binding のみ)。
+    // binding の無い環境の fallback 用に URL を置くが、本番では使われない。
     "NUXT_PUBLIC_EGOV_WORKER_BASE": "https://egov-staging.ippoan.org"
   },
   "routes": [
@@ -39,7 +45,7 @@
   // 500 になる (Refs #133)。service binding は内部 RPC で Access edge を通らない
   // ため、worker の /token /api/** へ直接到達できる。
   "services": [
-    { "binding": "EGOV_WORKER", "service": "egov-staging" }
+    { "binding": "EGOV_WORKER", "service": "egov-prod" }
   ],
   "env": {
     "staging": {
@@ -49,6 +55,7 @@
         "head_sampling_rate": 1
       },
       "vars": {
+        "NUXT_PUBLIC_EGOV_ENV": "sbx",
         "NUXT_PUBLIC_EGOV_CLIENT_ID": "K26XGOmbDusxfKsp",
         "NUXT_PUBLIC_EGOV_REDIRECT_URI": "https://egov-check-staging.ippoan.org/callback",
         "NUXT_PUBLIC_EGOV_AUTH_BASE": "https://account2.sbx.e-gov.go.jp/auth",
