@@ -16,6 +16,8 @@ const arriveId = computed(() => String(route.params.arriveId ?? ''))
 
 const { hasSession, startLogin, apiFetch } = useEgovAuth()
 const isProd = useRuntimeConfig().public.egovEnv === 'prod'
+/** 申請済みの控え (alc-app の管理画面「点呼の届出」。到達番号で R2 に保存。Refs ippoan/alc-app#686) */
+const ALC_ARCHIVES_URL = 'https://alc.ippoan.org/?role=admin&tab=tenko_filing'
 
 const detail = ref<ResultsApplyDetail | null>(null)
 const loading = ref(false)
@@ -142,6 +144,9 @@ function closeOfficialDocument() {
     </p>
     <p v-if="isProd" class="egov-hint">
       申請書や添付ファイルは API では取れません。「e-Gov で開く」でアプリのマイページを開き、申請案件一覧でこの到達番号の案件を開いてください。
+      点呼の届出の申請済みの控え (到達番号で保存した zip) は
+      <a :href="ALC_ARCHIVES_URL" target="_blank" rel="noopener" data-testid="alc-archives-link">一歩庵点呼の「点呼の届出」の申請済みの控え</a>
+      にあります (システム管理者のログインが要ります)。
     </p>
 
     <div v-if="!hasSession" class="login-section">
@@ -358,6 +363,10 @@ function closeOfficialDocument() {
   margin-bottom: 0.5rem;
   color: #4a5568;
   font-size: 0.9rem;
+}
+
+.egov-hint a {
+  color: #2b6cb0;
 }
 
 .egov-hint {
