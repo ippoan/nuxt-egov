@@ -20,19 +20,22 @@ interface ApplyListResponse {
   results: { apply_list: ApplyItem[] }
 }
 
-const dateFrom = ref('')
-const dateTo = ref('')
-const applications = ref<ApplyItem[]>([])
-const totalCount = ref(0)
+// 詳細ページから戻ったときに検索条件と結果が残るよう useState に置く。
+// 期間の既定は過去3ヶ月。
+const dateFrom = useState('apply_date_from', () => {
+  const d = new Date()
+  d.setMonth(d.getMonth() - 3)
+  return d.toISOString().slice(0, 10)
+})
+const dateTo = useState('apply_date_to', () => new Date().toISOString().slice(0, 10))
+const applications = useState<ApplyItem[]>('apply_list', () => [])
+const totalCount = useState('apply_total_count', () => 0)
 const loading = ref(false)
 const error = ref('')
 
-// デフォルトで過去3ヶ月
-const now = new Date()
-const threeMonthsAgo = new Date(now)
-threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3)
-dateFrom.value = threeMonthsAgo.toISOString().slice(0, 10)
-dateTo.value = now.toISOString().slice(0, 10)
+function openDetail(arriveId: string) {
+  if (arriveId) navigateTo(`/apply/${encodeURIComponent(arriveId)}`)
+}
 
 async function fetchApplications() {
   loading.value = true
@@ -116,7 +119,15 @@ async function fetchApplications() {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="app in applications" :key="app.arrive_id">
+          <tr
+            v-for="app in applications"
+            :key="app.arrive_id"
+            class="clickable"
+            tabindex="0"
+            title="クリックで詳細を表示"
+            @click="openDetail(app.arrive_id)"
+            @keydown.enter="openDetail(app.arrive_id)"
+          >
             <td>{{ app.no }}</td>
             <td>{{ app.proc_name }}</td>
             <td>
@@ -140,222 +151,3 @@ async function fetchApplications() {
     </div>
   </div>
 </template>
-
-<script lang="ts">
-function statusClass(status: string): string {
-  if (status.includes('到達')) return 'status-arrived'
-  if (status.includes('審査中')) return 'status-reviewing'
-  if (status.includes('手続終了')) return 'status-completed'
-  if (status.includes('取下げ')) return 'status-withdrawn'
-  return ''
-}
-</script>
-
-<style>
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background: #f5f7fa;
-  color: #333;
-}
-
-.container {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 2rem 1rem;
-}
-
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1.5rem;
-}
-
-h1 {
-  font-size: 1.5rem;
-  color: #1a365d;
-}
-
-.login-section {
-  text-align: center;
-  padding: 4rem 2rem;
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.login-section p {
-  margin-bottom: 1.5rem;
-  color: #666;
-}
-
-.btn {
-  padding: 0.5rem 1.5rem;
-  border: none;
-  border-radius: 4px;
-  font-size: 0.9rem;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.btn-primary {
-  background: #2b6cb0;
-  color: #fff;
-}
-
-.btn-primary:hover {
-  background: #2c5282;
-}
-
-.btn-primary:disabled {
-  background: #a0aec0;
-  cursor: not-allowed;
-}
-
-.btn-secondary {
-  background: #e2e8f0;
-  color: #4a5568;
-}
-
-.btn-secondary:hover {
-  background: #cbd5e0;
-}
-
-.toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 1rem;
-  margin-bottom: 1.5rem;
-  flex-wrap: wrap;
-}
-
-.date-range {
-  display: flex;
-  gap: 1rem;
-  align-items: flex-end;
-}
-
-.date-range label {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  font-size: 0.85rem;
-  color: #666;
-}
-
-.date-range input {
-  padding: 0.4rem 0.5rem;
-  border: 1px solid #cbd5e0;
-  border-radius: 4px;
-  font-size: 0.9rem;
-}
-
-.error {
-  background: #fed7d7;
-  color: #c53030;
-  padding: 0.75rem 1rem;
-  border-radius: 4px;
-  margin-bottom: 1rem;
-}
-
-.count {
-  font-size: 0.85rem;
-  color: #666;
-  margin-bottom: 0.5rem;
-}
-
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  background: #fff;
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.table th,
-.table td {
-  padding: 0.75rem 1rem;
-  text-align: left;
-  border-bottom: 1px solid #e2e8f0;
-  font-size: 0.85rem;
-}
-
-.table th {
-  background: #f7fafc;
-  font-weight: 600;
-  color: #4a5568;
-  white-space: nowrap;
-}
-
-.table tbody tr:hover {
-  background: #f7fafc;
-}
-
-.mono {
-  font-family: 'Menlo', 'Consolas', monospace;
-  font-size: 0.8rem;
-}
-
-.env-badge {
-  margin-left: 8px;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 0.5em;
-  vertical-align: middle;
-}
-
-.env-prod {
-  background: #e8f5e9;
-  color: #2e7d32;
-}
-
-.env-sbx {
-  background: #fff3e0;
-  color: #e65100;
-}
-
-.status-badge {
-  display: inline-block;
-  padding: 0.2rem 0.6rem;
-  border-radius: 12px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.status-arrived {
-  background: #bee3f8;
-  color: #2a4365;
-}
-
-.status-reviewing {
-  background: #fefcbf;
-  color: #744210;
-}
-
-.status-completed {
-  background: #c6f6d5;
-  color: #22543d;
-}
-
-.status-withdrawn {
-  background: #e2e8f0;
-  color: #4a5568;
-}
-
-.empty {
-  text-align: center;
-  padding: 3rem;
-  color: #a0aec0;
-  background: #fff;
-  border-radius: 8px;
-}
-</style>
