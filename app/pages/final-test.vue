@@ -1,4 +1,11 @@
 <script setup lang="ts">
+// 最終確認試験は検証環境 (sbx) 専用。本番 (egov-check.ippoan.org) では試験の申請を
+// 送らないよう、この画面は開かずに一覧へ戻す。
+definePageMeta({
+  middleware: () => {
+    if (useRuntimeConfig().public.egovEnv === 'prod') return navigateTo('/')
+  },
+})
 const BUILD_TIME = '20260415-0430'
 import { EgovApiError } from '@ippoan/egov-shinsei-sdk'
 import type { EgovClient } from '@ippoan/egov-shinsei-sdk'

@@ -90,8 +90,11 @@ async function handleLogout(req: Request, env: ProxyEnv): Promise<Response> {
 // authBase 配下 (/token, /token/introspect, /logout) への Basic 認証付き
 // form-urlencoded POST。client_secret は Secrets Store から取得して inject する。
 async function authFormPost(env: ProxyEnv, path: string, params: URLSearchParams): Promise<Response> {
+  const clientId = typeof env.EGOV_CLIENT_ID === 'string'
+    ? env.EGOV_CLIENT_ID
+    : await env.EGOV_CLIENT_ID.get();
   const clientSecret = await env.EGOV_CLIENT_SECRET.get();
-  const credentials = btoa(`${env.EGOV_CLIENT_ID}:${clientSecret}`);
+  const credentials = btoa(`${clientId}:${clientSecret}`);
 
   const upstream = await fetch(`${env.EGOV_AUTH_BASE}${path}`, {
     method: 'POST',

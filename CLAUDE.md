@@ -18,14 +18,14 @@ e-Gov 電子申請サービスのチェックツール。Nuxt 4 + Cloudflare Wor
 
 ## デプロイ
 
-- staging: https://egov-check-staging.ippoan.org（PR時に自動デプロイ。**唯一の稼働環境**）
+- staging: https://egov-check-staging.ippoan.org（PR時に自動デプロイ。e-Gov **検証環境 (sbx)** につながる）
+- 本番: https://egov-check.ippoan.org（main への push で `deploy-prod.yml`。e-Gov 本番環境）。構成と secret の流れは `nuxt-egov-map` skill
 - tagless（マージ/PR 駆動）: `v*` タグは切らない。Release Wave 非参加（Refs #151）
 - CI: `ippoan/ci-workflows` reusable workflow
-- 未使用: 本番 `egov-check.ippoan.org`（旧 tag 駆動 root config は残置だがデプロイされない）
 
 ## 環境変数
 
-`wrangler.jsonc` の `vars` に設定済み。`NUXT_EGOV_CLIENT_SECRET` のみ `wrangler secret` で管理。
+staging は `wrangler.jsonc` の `vars` + wrangler secret。本番の ID / API キーは CF Secrets Store の binding のみ (repo に書かない)。
 
 ## e-Gov 検証環境
 

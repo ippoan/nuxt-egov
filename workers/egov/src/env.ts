@@ -4,7 +4,9 @@
 export interface ProxyEnv {
   EGOV_AUTH_BASE: string;
   EGOV_API_BASE: string;
-  EGOV_CLIENT_ID: string;
+  // staging (sbx) は wrangler.toml の vars に平文。本番 (env.prod) は repo に ID を
+  // 書かないため Secrets Store binding で受ける (GCP `NUXT_PUBLIC_EGOV_CLIENT_ID_PROD`)。
+  EGOV_CLIENT_ID: string | SecretsStoreSecret;
   EGOV_CLIENT_SECRET: SecretsStoreSecret;
 }
 

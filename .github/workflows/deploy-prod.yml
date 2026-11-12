@@ -1,0 +1,89 @@
+name: Deploy production
+
+# 本番 (e-Gov 電子申請 API の本番環境) の配信。tagless のまま、main への push で
+# 本番の 2 worker を順に配信する (staging は従来どおり test.yml / egov-worker-ci.yml が
+# PR で配信する)。
+#
+#   1. egov-prod   (workers/egov の [env.prod]) — e-Gov 本番 API の呼び出し。公開ドメイン無し。
+#                  client_id / client_secret は CF Secrets Store binding (`*_PROD`)。
+#   2. egov-check  (repo 直下 wrangler.jsonc の top-level) — 本番の画面
+#                  https://egov-check.ippoan.org 。egov-prod へ service binding で繋ぐ
+#                  ため 1 の後に配信する。
+#
+# 本番の client_id / client_secret は repo にも GitHub にも置かない。GCP Secret Manager
+# (`NUXT_PUBLIC_EGOV_CLIENT_ID_PROD` / `NUXT_EGOV_CLIENT_SECRET_PROD`) を secrets-inventory の
+# sync_from_gcp (targets=cf) で CF Secrets Store に写し、2 つの worker とも binding で読む。
+# secrets_store_secrets は wrangler 3 では黙って無視されるため、配信は wrangler 4 で行う。
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.claude/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  worker:
+    name: Deploy egov-prod worker
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workers/egov
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@ippoan'
+
+      # legacy-peer-deps は workers/egov/.npmrc で指定済み。
+      - name: Install
+        run: npm install
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # wrangler 3 系 (package.json の devDependency) は secrets_store_secrets を
+      # 黙って無視する (binding が付かず EGOV_CLIENT_SECRET が undefined、Refs #133)。
+      - name: Deploy
+        run: npx -y wrangler@4 deploy --config wrangler.toml --env prod
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+  app:
+    name: Deploy egov-check (本番の画面)
+    needs: worker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@ippoan'
+
+      - name: Install
+        run: npm install
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy
+        run: npx -y wrangler@4 deploy --env=""
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+

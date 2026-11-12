@@ -33,6 +33,22 @@ e-Gov API は `server/api/egov/` プロキシ経由で叩く。e-Gov は **検�
 - vars: `NUXT_PUBLIC_EGOV_{CLIENT_ID,REDIRECT_URI,AUTH_BASE,API_BASE}`。secret は `NUXT_EGOV_CLIENT_SECRET` のみ (`wrangler secret`)。
 - e-Gov 検証環境: API `api2.sbx.e-gov.go.jp/shinsei/v2`、auth `account2.sbx.e-gov.go.jp/auth`。
 
+## 本番 (e-Gov 本番環境)
+
+| | staging (sbx) | 本番 |
+|---|---|---|
+| 画面 | `egov-check-staging` (`--env staging`) | `egov-check` (wrangler.jsonc top-level、egov-check.ippoan.org) |
+| e-Gov 呼び出し | `egov-staging` (egov-staging.ippoan.org) | `egov-prod` (`workers/egov` の `[env.prod]`、公開ドメイン無し・service binding のみ) |
+| endpoint | `account2.sbx` / `api2.sbx` | `account.e-gov.go.jp/auth` / `api.e-gov.go.jp/shinsei/v2` |
+| client_id / secret | vars + wrangler secret | CF Secrets Store `NUXT_PUBLIC_EGOV_CLIENT_ID_PROD` / `NUXT_EGOV_CLIENT_SECRET_PROD` の binding `EGOV_CLIENT_ID` / `EGOV_CLIENT_SECRET` |
+| 配信 | PR で test.yml / egov-worker-ci.yml | main への push (+ 手動) で `deploy-prod.yml` (egov-prod → egov-check の順) |
+
+- 本番の値は GCP の `*_PROD` が正。`sync_from_gcp` (targets=cf) で Secrets Store へ写す。GitHub には置かない
+- 画面は `server/plugins/egovSecretsStore.ts` が request ごとに binding を `get()` し、その request の runtimeConfig (`egovClientId` / `egovClientSecret`) に入れる。binding の無い staging では何もしない
+- `secrets_store_secrets` は **wrangler 3 では黙って無視される** (#133 の原因)。本番の配信は `wrangler@4`
+- 本番 (`NUXT_PUBLIC_EGOV_ENV=prod`) では `/final-test` を一覧へ戻す。API の送信系は塞いでいない
+- コールバック URL は `https://egov-check.ippoan.org/callback` (e-Gov の本番ソフトウェア ID に登録済み)
+
 ## gotcha (CLAUDE.md 由来)
 
 - **kousei.xml**: 全 49 手続で同一構造 (空タグ 30 個)。`kouseiTestValues` で必須を埋める。郵便番号/電話は半角のまま (全角化すると e-Gov マスタチェックで弾かれる)、住所は全角。
@@ -46,7 +62,7 @@ e-Gov API は `server/api/egov/` プロキシ経由で叩く。e-Gov は **検�
 ## CCoW / CI から見た立ち位置
 
 - consumer 側。**`@ippoan/auth-client` は使わない** (認証は e-Gov OAuth2 を SDK 経由で直接扱う)。`.npmrc` で `@ippoan:registry=https://npm.pkg.github.com` 必須。
-- CI: ci-workflows reusable workflow。PR で staging 自動デプロイ、tag push で prod。
+- CI: ci-workflows reusable workflow。PR で staging 自動デプロイ。本番は `deploy-prod.yml` (tagless)。
 
 ## 関連 skill
 
