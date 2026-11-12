@@ -8,8 +8,6 @@ export interface ProxyEnv {
   // 書かないため Secrets Store binding で受ける (GCP `NUXT_PUBLIC_EGOV_CLIENT_ID_PROD`)。
   EGOV_CLIENT_ID: string | SecretsStoreSecret;
   EGOV_CLIENT_SECRET: SecretsStoreSecret;
-  // "true" のとき `/api/**` は GET / HEAD だけ通す (本番で申請送信を塞ぐ)。
-  EGOV_READ_ONLY?: string;
 }
 
 export interface Env extends ProxyEnv {

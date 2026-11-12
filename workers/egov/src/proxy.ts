@@ -116,12 +116,7 @@ async function authFormPost(env: ProxyEnv, path: string, params: URLSearchParams
 
 // e-Gov v2 API への透過 proxy。Authorization (Bearer access_token) は caller 提供。
 // 不正 token は e-Gov 側で 401 になるため worker 自前の gate は無し。
-// EGOV_READ_ONLY=true (本番) では GET / HEAD 以外を 405 で拒否し、申請の送信・
-// 取下げ等の書き込みを worker で塞ぐ (本番は申請状況の照会だけに使う)。
 async function handleProxy(req: Request, env: ProxyEnv, subpath: string): Promise<Response> {
-  if (env.EGOV_READ_ONLY === 'true' && req.method !== 'GET' && req.method !== 'HEAD') {
-    return jsonResponse({ error: 'method_not_allowed', detail: 'read-only environment' }, { status: 405 });
-  }
   const inUrl = new URL(req.url);
   const targetUrl = `${env.EGOV_API_BASE}/${subpath}${inUrl.search}`;
 

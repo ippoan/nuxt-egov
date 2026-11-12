@@ -163,28 +163,7 @@ describe('/api/* proxy', () => {
     expect(body.forwarded_auth).toBe('Bearer caller-token');
   });
 
-  it('allows GET when EGOV_READ_ONLY=true', async () => {
-    const res = await worker.fetch(
-      new Request('https://w/api/apply/lists', { headers: { 'authorization': 'Bearer t' } }),
-      makeEnv({ EGOV_READ_ONLY: 'true' }),
-    );
-    expect(res.status).toBe(200);
-  });
-
-  it('rejects POST with 405 when EGOV_READ_ONLY=true', async () => {
-    const res = await worker.fetch(
-      new Request('https://w/api/apply', {
-        method: 'POST',
-        headers: { 'authorization': 'Bearer t', 'content-type': 'application/json' },
-        body: '{}',
-      }),
-      makeEnv({ EGOV_READ_ONLY: 'true' }),
-    );
-    expect(res.status).toBe(405);
-    expect(globalThis.fetch).not.toHaveBeenCalled();
-  });
-
-  it('forwards POST when not read-only', async () => {
+  it('forwards POST body and X-eGovAPI-Trial', async () => {
     const res = await worker.fetch(
       new Request('https://w/api/apply', {
         method: 'POST',

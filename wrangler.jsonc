@@ -22,11 +22,8 @@
   },
   // top-level = 本番 (e-Gov 電子申請 API の本番環境)。.github/workflows/deploy-prod.yml が
   // main への push で配信する。本番の client_id / client_secret は repo に書かず、
-  // 同 workflow が GitHub secret (GCP Secret Manager の
-  // NUXT_PUBLIC_EGOV_CLIENT_ID_PROD / NUXT_EGOV_CLIENT_SECRET_PROD を sync_from_gcp で
-  // 写したもの) から `wrangler secret bulk` で worker secret
-  // NUXT_PUBLIC_EGOV_CLIENT_ID / NUXT_EGOV_CLIENT_SECRET に入れる。
-  // (var と secret は同名を持てないため、ここに NUXT_PUBLIC_EGOV_CLIENT_ID は置かない)
+  // 下の secrets_store_secrets (GCP の *_PROD を sync_from_gcp targets=cf で写したもの) を
+  // server/plugins/egovSecretsStore.ts が request ごとに読んで runtimeConfig に入れる。
   "vars": {
     "NUXT_PUBLIC_EGOV_ENV": "prod",
     "NUXT_PUBLIC_EGOV_REDIRECT_URI": "https://egov-check.ippoan.org/callback",
@@ -46,6 +43,20 @@
   // ため、worker の /token /api/** へ直接到達できる。
   "services": [
     { "binding": "EGOV_WORKER", "service": "egov-prod" }
+  ],
+  // 本番の e-Gov ソフトウェア ID / API キー。env へは継承されない (staging は持たない)。
+  // secrets_store_secrets は wrangler 4 でしか binding されない (wrangler 3 は黙って無視)。
+  "secrets_store_secrets": [
+    {
+      "binding": "EGOV_CLIENT_ID",
+      "store_id": "bd7bc91a3e5f4111add4acf6cb4b8733",
+      "secret_name": "NUXT_PUBLIC_EGOV_CLIENT_ID_PROD"
+    },
+    {
+      "binding": "EGOV_CLIENT_SECRET",
+      "store_id": "bd7bc91a3e5f4111add4acf6cb4b8733",
+      "secret_name": "NUXT_EGOV_CLIENT_SECRET_PROD"
+    }
   ],
   "env": {
     "staging": {
